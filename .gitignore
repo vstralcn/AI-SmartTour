@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+
+# Node.js
+node_modules/
+dist/
+.nuxt/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models (too large for git)
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+
+# Knowledge base vectors
+backend/knowledge_base/vectors/
+
+# Logs
+*.log
+logs/
