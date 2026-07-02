@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # 后端API服务
   backend:
@@ -16,30 +14,21 @@ services:
     volumes:
       - ./backend/knowledge_base:/app/knowledge_base
 
-  # 数字人推理服务（需要GPU）
-  digital-human:
-    build: ./digital_human
-    ports:
-      - "8001:8001"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
   # 前端-游客端
   tourist-app:
     build: ./frontend/tourist-app
     ports:
       - "3000:80"
+    depends_on:
+      - backend
 
   # 前端-管理后台
   admin-panel:
     build: ./frontend/admin-panel
     ports:
       - "3001:80"
+    depends_on:
+      - backend
 
   # PostgreSQL
   postgres:
@@ -59,11 +48,21 @@ services:
     ports:
       - "6379:6379"
 
-  # Milvus向量数据库（可选，ChromaDB可内嵌）
-  # milvus:
-  #   image: milvusdb/milvus:v2.4-latest
-  #   ports:
-  #     - "19530:19530"
+  # 数字人推理服务（需要GPU，按需启动）
+  # 启用方式: docker compose --profile gpu up -d
+  digital-human:
+    build: ./digital_human
+    ports:
+      - "8001:8001"
+    profiles:
+      - gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
 volumes:
   pgdata:
