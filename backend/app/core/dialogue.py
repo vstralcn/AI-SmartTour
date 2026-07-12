@@ -8,7 +8,9 @@ from app.config import settings
 from app.core.agent import AgentExecution, GuideAgent
 from app.core.rag import rag_engine
 
-SYSTEM_PROMPT = """你是智慧景区的AI数字人导游"小智"，性格热情开朗、知识渊博。
+SYSTEM_PROMPT = """你是智慧景区的AI数字人导游“{guide_name}”。
+角色性格：{guide_personality}
+讲解风格：{speaking_style}
 
 角色要求：
 1. 回答必须基于【参考知识】中的内容，不编造信息
@@ -30,24 +32,44 @@ class DialogueEngine:
         self.rag = rag_engine
         self.agent = GuideAgent(self.rag)
 
-    def create_session(self, interests: list[str] | None = None) -> tuple[str, str]:
+    def create_session(
+        self,
+        interests: list[str] | None = None,
+        age_group: str = "成人",
+        companions: list[str] | None = None,
+        mobility: str = "标准",
+        visit_duration: float = 3.0,
+        guide_name: str = "小智",
+        guide_personality: str = "热情开朗，知识渊博",
+        speaking_style: str = "亲切自然",
+    ) -> tuple[str, str]:
         session_id = str(uuid.uuid4())
-        self.agent.create_profile(session_id, interests)
-        greeting = self._generate_greeting(interests or [])
+        self.agent.create_profile(
+            session_id,
+            interests,
+            age_group,
+            companions,
+            mobility,
+            visit_duration,
+            guide_name,
+            guide_personality,
+            speaking_style,
+        )
+        greeting = self._generate_greeting(interests or [], guide_name)
         self.sessions[session_id].append({"role": "assistant", "content": greeting})
         return session_id, greeting
 
-    def _generate_greeting(self, interests: list[str]) -> str:
+    def _generate_greeting(self, interests: list[str], guide_name: str) -> str:
         if interests:
             interest_text = "、".join(interests)
             return (
-                f"欢迎来到智慧景区！我是您的AI导游小智。"
+                f"欢迎来到智慧景区！我是您的AI导游{guide_name}。"
                 f"看到您对{interest_text}很感兴趣，太棒了！"
                 f"我可以为您推荐最适合的游览路线，也能为您讲解景区的历史文化。"
                 f"有什么想了解的，随时问我哦！"
             )
         return (
-            "欢迎来到智慧景区！我是您的AI导游小智，很高兴为您服务。"
+            f"欢迎来到智慧景区！我是您的AI导游{guide_name}，很高兴为您服务。"
             "我可以为您介绍景区的景点、历史文化，"
             "也能根据您的兴趣推荐个性化的游览路线。有什么想问的吗？"
         )
@@ -72,7 +94,15 @@ class DialogueEngine:
 
         profile = self.agent.user_profiles.get(session_id, {})
         interests = list(profile.get("interests", []))
-        system_msg = SYSTEM_PROMPT.format(interests="、".join(interests) if interests else "综合")
+        system_msg = SYSTEM_PROMPT.format(
+            interests="、".join(interests) if interests else "综合",
+            guide_name=profile.get("guide_name", "小智"),
+            guide_personality=profile.get(
+                "guide_personality",
+                "热情开朗，知识渊博",
+            ),
+            speaking_style=profile.get("speaking_style", "亲切自然"),
+        )
 
         if execution.context:
             system_msg += f"\n\n【参考知识】\n{execution.context}"

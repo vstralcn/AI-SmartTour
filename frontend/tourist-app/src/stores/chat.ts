@@ -28,7 +28,9 @@ export interface KnowledgeSource {
 export interface UserProfile {
   interests: string[]
   visitDuration: number
-  physicalCondition: string
+  ageGroup: string
+  companions: string[]
+  mobility: string
   visitedSpots: string[]
 }
 
@@ -41,7 +43,9 @@ export const useChatStore = defineStore('chat', () => {
   const userProfile = ref<UserProfile>({
     interests: [],
     visitDuration: 3,
-    physicalCondition: '正常',
+    ageGroup: '成人',
+    companions: [],
+    mobility: '标准',
     visitedSpots: [],
   })
 

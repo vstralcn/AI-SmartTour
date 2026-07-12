@@ -7,6 +7,10 @@ from pydantic import BaseModel, Field
 class CreateSessionRequest(BaseModel):
     visitor_id: str | None = None
     interests: list[str] = Field(default_factory=list)
+    age_group: str = "成人"
+    companions: list[str] = Field(default_factory=list)
+    mobility: str = "标准"
+    visit_duration: float = Field(default=3.0, ge=0.5, le=12)
 
 
 class CreateSessionResponse(BaseModel):
@@ -34,6 +38,8 @@ class RouteRecommendRequest(BaseModel):
     session_id: str
     duration_hours: float = 3
     interests: list[str] = Field(default_factory=list)
+    companions: list[str] = Field(default_factory=list)
+    mobility: str = "标准"
 
 
 class ScenicSpotSchema(BaseModel):
@@ -59,6 +65,24 @@ class KnowledgeDocSchema(BaseModel):
     content: str
     file_path: str
     upload_time: str
+    status: str = "active"
+    kind: str = "document"
+    source: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
+class KnowledgeDocCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    category: str = Field(default="景区知识", max_length=80)
+    content: str = Field(min_length=1)
+    kind: str = "document"
+    source: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
+class KnowledgeDocUpdate(KnowledgeDocCreate):
     status: str = "active"
 
 
@@ -100,6 +124,9 @@ class AvatarConfigSchema(BaseModel):
     appearance: AppearanceConfig = Field(default_factory=AppearanceConfig)
     voice_config: VoiceConfig = Field(default_factory=VoiceConfig)
     personality: str = ""
+    gender: str = "女"
+    clothing: str = "现代导游服"
+    speaking_style: str = "亲切自然"
     is_active: bool = False
 
 
@@ -110,9 +137,9 @@ class HotQuestion(BaseModel):
     count: int
 
 
-class SatisfactionPoint(BaseModel):
+class ResponseTimePoint(BaseModel):
     date: str
-    score: float
+    value: int
 
 
 class HourlyVisit(BaseModel):
@@ -125,15 +152,25 @@ class SpotPopularity(BaseModel):
     visits: int
 
 
+class RoutePreference(BaseModel):
+    name: str
+    count: int
+
+
 class DashboardData(BaseModel):
     today_visitors: int
     weekly_visitors: int
     total_sessions: int
-    avg_satisfaction: float
+    avg_response_ms: int
+    knowledge_gap_count: int
+    negative_feedback_count: int
     hot_questions: list[HotQuestion]
-    satisfaction_trend: list[SatisfactionPoint]
+    response_time_trend: list[ResponseTimePoint]
     hourly_visits: list[HourlyVisit]
     spot_popularity: list[SpotPopularity]
+    route_preferences: list[RoutePreference]
+    data_source: str
+    generated_at: str
 
 
 class SentimentTrendPoint(BaseModel):

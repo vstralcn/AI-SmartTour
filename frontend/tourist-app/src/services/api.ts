@@ -10,6 +10,10 @@ const api = axios.create({
 export interface CreateSessionRequest {
   visitor_id?: string
   interests?: string[]
+  age_group?: string
+  companions?: string[]
+  mobility?: string
+  visit_duration?: number
 }
 
 export interface CreateSessionResponse {
@@ -21,6 +25,8 @@ export interface RouteRecommendRequest {
   session_id: string
   duration_hours: number
   interests: string[]
+  companions: string[]
+  mobility: string
 }
 
 export interface ScenicSpot {
@@ -37,6 +43,25 @@ export interface RouteRecommendResponse {
   description: string
 }
 
+export interface AvatarConfig {
+  id: string
+  name: string
+  appearance: {
+    image_url: string
+    style: string
+  }
+  voice_config: {
+    voice_id: string
+    speed: number
+    pitch: number
+  }
+  personality: string
+  gender: string
+  clothing: string
+  speaking_style: string
+  is_active: boolean
+}
+
 export async function createSession(
   req: CreateSessionRequest
 ): Promise<CreateSessionResponse> {
@@ -48,6 +73,11 @@ export async function getRecommendedRoute(
   req: RouteRecommendRequest
 ): Promise<RouteRecommendResponse> {
   const { data } = await api.post('/recommend/route', req)
+  return data
+}
+
+export async function getActiveAvatar(): Promise<AvatarConfig> {
+  const { data } = await api.get('/avatar/active')
   return data
 }
 

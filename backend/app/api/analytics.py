@@ -1,18 +1,18 @@
-"""数据分析与大屏API"""
+"""数据分析与大屏API。"""
 
 from fastapi import APIRouter
 
-from app.core.sentiment import generate_mock_dashboard, generate_mock_sentiment_report
 from app.models.schemas import DashboardData, SentimentReport
+from app.services.analytics import build_dashboard, build_sentiment_report
 
 router = APIRouter(prefix="/admin/analytics")
 
 
 @router.get("/dashboard", response_model=DashboardData)
 async def get_dashboard():
-    return generate_mock_dashboard()
+    return await build_dashboard()
 
 
 @router.get("/sentiment", response_model=SentimentReport)
 async def get_sentiment():
-    return generate_mock_sentiment_report()
+    return await build_sentiment_report()

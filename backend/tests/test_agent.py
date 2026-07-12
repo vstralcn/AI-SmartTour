@@ -22,6 +22,8 @@ class GuideAgentTest(unittest.TestCase):
             "亲子游玩",
             self.agent.user_profiles["session-1"]["interests"],
         )
+        self.assertIn("古建筑群", execution.route_spots)
+        self.assertIn("文化体验馆", execution.route_spots)
 
     def test_unknown_knowledge_is_refused(self) -> None:
         execution = self.agent.execute("session-1", "请介绍量子芯片设计")
@@ -37,6 +39,13 @@ class GuideAgentTest(unittest.TestCase):
         self.assertEqual(execution.intent, "feedback")
         self.assertIn("FB-", execution.direct_response)
         self.assertEqual(len(self.agent.feedback_records), 1)
+
+    def test_follow_up_reference_uses_last_scenic_spot(self) -> None:
+        self.agent.execute("session-1", "介绍一下古建筑群")
+        execution = self.agent.execute("session-1", "这个景点有什么历史？")
+
+        self.assertTrue(execution.evidence)
+        self.assertEqual(execution.evidence[0].title, "古建筑群")
 
 
 if __name__ == "__main__":

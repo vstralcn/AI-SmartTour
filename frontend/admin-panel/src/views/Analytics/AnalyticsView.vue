@@ -24,36 +24,7 @@ use([
 ])
 
 const report = ref<SentimentReport | null>(null)
-
-const demoReport: SentimentReport = {
-  positive_ratio: 0.72,
-  neutral_ratio: 0.21,
-  negative_ratio: 0.07,
-  trend: [
-    { date: '06-24', positive: 70, neutral: 22, negative: 8 },
-    { date: '06-25', positive: 73, neutral: 20, negative: 7 },
-    { date: '06-26', positive: 68, neutral: 24, negative: 8 },
-    { date: '06-27', positive: 75, neutral: 19, negative: 6 },
-    { date: '06-28', positive: 71, neutral: 21, negative: 8 },
-    { date: '06-29', positive: 74, neutral: 20, negative: 6 },
-    { date: '06-30', positive: 72, neutral: 21, negative: 7 },
-  ],
-  top_concerns: [
-    { topic: '景区服务', count: 456, sentiment: 'positive' },
-    { topic: '导览讲解质量', count: 389, sentiment: 'positive' },
-    { topic: '排队等候', count: 234, sentiment: 'negative' },
-    { topic: '景区设施', count: 198, sentiment: 'neutral' },
-    { topic: '门票价格', count: 156, sentiment: 'neutral' },
-    { topic: '餐饮服务', count: 134, sentiment: 'positive' },
-  ],
-  suggestions: [
-    '建议增加高峰时段分流措施，缓解排队压力',
-    '游客对历史文化类讲解满意度最高，可加强此类内容深度',
-    '景区内餐饮选择受到好评，建议增加更多特色小吃',
-    '部分游客反映导览路线标识不够清晰，建议优化指引',
-    '推荐个性化路线功能受到积极反馈，可进一步细化兴趣分类',
-  ],
-}
+const loadError = ref('')
 
 const sentimentPieOption = ref({})
 const sentimentTrendOption = ref({})
@@ -143,17 +114,19 @@ function buildCharts(data: SentimentReport) {
 onMounted(async () => {
   try {
     report.value = await getSentimentReport()
+    buildCharts(report.value)
   } catch {
-    report.value = demoReport
+    loadError.value = '情绪分析加载失败，请检查后端和数据库状态。'
   }
-  buildCharts(report.value!)
 })
 </script>
 
 <template>
-  <div class="analytics-view" v-if="report">
+  <div class="analytics-view">
     <h1 class="page-title">游客感受度分析</h1>
+    <el-alert v-if="loadError" :title="loadError" type="error" show-icon />
 
+    <template v-if="report">
     <div class="overview-cards">
       <div class="overview-card positive">
         <div class="card-value">{{ Math.round(report.positive_ratio * 100) }}%</div>
@@ -195,6 +168,7 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+    </template>
   </div>
 </template>
 

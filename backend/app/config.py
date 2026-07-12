@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # 数据库
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/smarttour"
+    database_url: str = "sqlite+aiosqlite:///./smarttour.db"
     redis_url: str = "redis://localhost:6379/0"
 
     # LLM配置
@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     # 向量数据库
     vector_db_path: str = "./knowledge_base/vectors"
+    knowledge_upload_dir: str = "./uploads"
 
     # 数字人配置
     digital_human_url: str = "http://localhost:8001"
