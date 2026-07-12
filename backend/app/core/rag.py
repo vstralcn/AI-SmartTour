@@ -2,15 +2,37 @@
 
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class KnowledgeEvidence:
+    title: str
+    content: str
+    category: str
+    score: float
+    source: str
+
+
+@dataclass(frozen=True)
+class RetrievalResult:
+    query: str
+    evidence: list[KnowledgeEvidence]
+    confidence: float
+    answer: str
+    matched_by: str
+
+    @property
+    def found(self) -> bool:
+        return bool(self.evidence)
 
 
 class RAGEngine:
     """景区知识库检索引擎
 
-    支持两种检索模式：
-    1. 精确FAQ匹配（关键词命中）
-    2. 语义向量检索（ChromaDB，需初始化）
+    当前支持 FAQ 精确匹配和轻量关键词排序，并输出结构化证据。
+    BGE-M3、Reranker 与向量数据库通过 rag 可选依赖预留升级路径。
     """
 
     def __init__(self):
@@ -37,44 +59,112 @@ class RAGEngine:
             self.faq = self._default_faq()
 
     def retrieve(self, query: str, top_k: int = 3) -> str:
-        faq_result = self._faq_match(query)
+        result = self.retrieve_with_sources(query, top_k)
+        return "\n\n".join(item.content for item in result.evidence)
+
+    def retrieve_with_sources(self, query: str, top_k: int = 3) -> RetrievalResult:
+        clean_query = query.strip()
+        if not clean_query:
+            return RetrievalResult(
+                query=query,
+                evidence=[],
+                confidence=0.0,
+                answer="",
+                matched_by="none",
+            )
+
+        faq_result = self._faq_match(clean_query)
         if faq_result:
-            return faq_result
+            return RetrievalResult(
+                query=clean_query,
+                evidence=[faq_result],
+                confidence=faq_result.score,
+                answer=faq_result.content,
+                matched_by="faq",
+            )
 
-        results = self._keyword_search(query, top_k)
-        if results:
-            return "\n\n".join(results)
-        return ""
+        evidence = self._keyword_search(clean_query, top_k)
+        if not evidence:
+            return RetrievalResult(
+                query=clean_query,
+                evidence=[],
+                confidence=0.0,
+                answer="",
+                matched_by="none",
+            )
 
-    def _faq_match(self, query: str) -> str:
+        confidence = evidence[0].score
+        answer = evidence[0].content
+        return RetrievalResult(
+            query=clean_query,
+            evidence=evidence,
+            confidence=confidence,
+            answer=answer,
+            matched_by="keyword",
+        )
+
+    def _faq_match(self, query: str) -> KnowledgeEvidence | None:
         for item in self.faq:
             keywords = item.get("keywords", [])
             if any(kw in query for kw in keywords):
-                return item["answer"]
-        return ""
+                return KnowledgeEvidence(
+                    title=item.get("title", "常见问题 FAQ"),
+                    content=item["answer"],
+                    category=item.get("category", "FAQ"),
+                    score=1.0,
+                    source=item.get("source", "景区常见问题"),
+                )
+        return None
 
-    def _keyword_search(self, query: str, top_k: int = 3) -> list[str]:
-        scored: list[tuple[float, str]] = []
-        query_terms = set(re.findall(r"[\u4e00-\u9fff]+", query))
+    def _keyword_search(self, query: str, top_k: int = 3) -> list[KnowledgeEvidence]:
+        scored: list[KnowledgeEvidence] = []
+        normalized_query = self._normalize(query)
+        query_bigrams = self._bigrams(normalized_query)
 
         for doc in self.knowledge_base:
             content = doc.get("content", "")
             title = doc.get("title", "")
-            tags = set(doc.get("tags", []))
+            category = doc.get("category", "景区知识")
+            tags = doc.get("tags", [])
+            normalized_doc = self._normalize(" ".join([title, content, category, *tags]))
+            doc_bigrams = self._bigrams(normalized_doc)
 
-            score = 0.0
-            for term in query_terms:
-                if term in title:
-                    score += 3.0
-                if term in content:
-                    score += 1.0
-                if term in tags:
-                    score += 2.0
-            if score > 0:
-                scored.append((score, content))
+            normalized_title = self._normalize(title)
+            normalized_category = self._normalize(category)
+            title_hit = 0.45 if normalized_title and normalized_title in normalized_query else 0.0
+            category_hit = (
+                0.15
+                if normalized_category and normalized_category in normalized_query
+                else 0.0
+            )
+            tag_hits = sum(1 for tag in tags if self._normalize(tag) in normalized_query)
+            tag_score = min(tag_hits * 0.2, 0.4)
+            overlap = len(query_bigrams & doc_bigrams) / max(len(query_bigrams), 1)
+            score = min(title_hit + category_hit + tag_score + overlap * 0.6, 1.0)
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [s[1] for s in scored[:top_k]]
+            if score >= 0.12:
+                scored.append(
+                    KnowledgeEvidence(
+                        title=title,
+                        content=content,
+                        category=category,
+                        score=round(score, 3),
+                        source=doc.get("source", title),
+                    )
+                )
+
+        scored.sort(key=lambda item: item.score, reverse=True)
+        return scored[:top_k]
+
+    @staticmethod
+    def _normalize(text: str) -> str:
+        return "".join(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]+", text)).lower()
+
+    @staticmethod
+    def _bigrams(text: str) -> set[str]:
+        if len(text) < 2:
+            return {text} if text else set()
+        return {text[index : index + 2] for index in range(len(text) - 1)}
 
     def add_document(self, title: str, content: str, category: str, tags: list[str]):
         self.knowledge_base.append(

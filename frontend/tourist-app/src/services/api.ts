@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE || ''
 
 const api = axios.create({
   baseURL: `${API_BASE}/api/v1`,
@@ -52,7 +52,9 @@ export async function getRecommendedRoute(
 }
 
 export function createChatWebSocket(sessionId: string): WebSocket {
-  const wsBase = API_BASE.replace(/^http/, 'ws')
+  const wsBase = API_BASE
+    ? API_BASE.replace(/^http/, 'ws')
+    : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
   return new WebSocket(`${wsBase}/api/v1/chat/stream?session_id=${sessionId}`)
 }
 

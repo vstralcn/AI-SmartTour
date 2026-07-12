@@ -55,6 +55,20 @@ watch(
         </div>
         <div class="message-body">
           <div class="message-content">{{ msg.content }}</div>
+          <div v-if="msg.agentSteps?.length" class="agent-trace">
+            <div class="trace-title">Agent 执行轨迹</div>
+            <div v-for="step in msg.agentSteps" :key="`${step.tool}-${step.detail}`" class="trace-step">
+              <span class="trace-status" :class="step.status"></span>
+              <span>{{ step.detail }}</span>
+            </div>
+          </div>
+          <div v-if="msg.sources?.length" class="source-list">
+            <div class="source-title">回答依据</div>
+            <div v-for="source in msg.sources" :key="`${source.source}-${source.title}`" class="source-item">
+              <span>{{ source.title }}</span>
+              <span class="source-score">{{ Math.round(source.score * 100) }}%</span>
+            </div>
+          </div>
           <div class="message-meta">
             <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
             <span v-if="msg.emotion" class="message-emotion">{{ msg.emotion }}</span>
@@ -162,6 +176,52 @@ watch(
   color: #1f2937;
   border-bottom-left-radius: 4px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.agent-trace,
+.source-list {
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.trace-title,
+.source-title {
+  color: #3730a3;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.trace-step,
+.source-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.source-item {
+  justify-content: space-between;
+}
+
+.trace-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex-shrink: 0;
+}
+
+.trace-status.no_result {
+  background: #f59e0b;
+}
+
+.source-score {
+  color: #4f46e5;
+  font-variant-numeric: tabular-nums;
 }
 
 .message-meta {

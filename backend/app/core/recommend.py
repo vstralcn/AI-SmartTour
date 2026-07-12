@@ -95,16 +95,17 @@ def recommend_route(
             total_minutes += spot["recommended_duration"]
 
     route.sort(key=lambda x: int(x["id"]))
+    duration_text = f"{duration_hours:g}"
 
     if interests:
         interest_text = "、".join(interests)
         desc = (
-            f"根据您对{interest_text}的兴趣偏好，为您规划了约{duration_hours}小时的游览路线。"
+            f"根据您对{interest_text}的兴趣偏好，为您规划了约{duration_text}小时的游览路线。"
             f"路线共{len(route)}个景点，预计游览时间{total_minutes}分钟。"
         )
     else:
         desc = (
-            f"为您规划了约{duration_hours}小时的综合游览路线，"
+            f"为您规划了约{duration_text}小时的综合游览路线，"
             f"涵盖{len(route)}个精华景点，预计游览时间{total_minutes}分钟。"
         )
 

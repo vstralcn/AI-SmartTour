@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, File, UploadFile
 
 from app.core.rag import rag_engine
 from app.models.schemas import (
@@ -94,13 +94,25 @@ async def delete_doc(doc_id: str):
 
 @router.post("/test", response_model=KnowledgeTestResponse)
 async def test_knowledge(req: KnowledgeTestRequest):
-    context = rag_engine.retrieve(req.question)
-    if context:
+    result = rag_engine.retrieve_with_sources(req.question)
+    if result.found:
         return KnowledgeTestResponse(
-            answer=context,
-            sources=["景区知识库"],
+            answer=result.answer,
+            sources=[item.source for item in result.evidence],
+            confidence=result.confidence,
+            evidence=[
+                {
+                    "title": item.title,
+                    "category": item.category,
+                    "score": item.score,
+                    "source": item.source,
+                    "excerpt": item.content[:160],
+                }
+                for item in result.evidence
+            ],
         )
     return KnowledgeTestResponse(
-        answer="抱歉，知识库中暂无相关信息。建议补充相关文档。",
+        answer="抱歉，知识库中暂无足够相关的证据。建议补充相关文档。",
         sources=[],
+        confidence=0.0,
     )

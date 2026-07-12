@@ -8,6 +8,21 @@ export interface ChatMessage {
   timestamp: number
   emotion?: string
   audioUrl?: string
+  agentSteps?: AgentStep[]
+  sources?: KnowledgeSource[]
+}
+
+export interface AgentStep {
+  tool: string
+  status: string
+  detail: string
+}
+
+export interface KnowledgeSource {
+  title: string
+  category: string
+  score: number
+  source: string
 }
 
 export interface UserProfile {

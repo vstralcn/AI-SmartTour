@@ -8,6 +8,7 @@ const router = useRouter()
 const chatStore = useChatStore()
 const selectedInterests = ref<string[]>([])
 const isStarting = ref(false)
+const connectionError = ref('')
 
 const interestOptions = [
   { label: '历史文化', value: '历史文化', icon: '🏛️' },
@@ -29,6 +30,7 @@ function toggleInterest(value: string) {
 
 async function startChat() {
   isStarting.value = true
+  connectionError.value = ''
   try {
     const resp = await createSession({
       interests: selectedInterests.value,
@@ -44,17 +46,7 @@ async function startChat() {
     })
     router.push('/chat')
   } catch {
-    chatStore.setSessionId('demo-session')
-    chatStore.userProfile.interests = selectedInterests.value
-    chatStore.addMessage({
-      id: 'greeting',
-      role: 'assistant',
-      content:
-        '欢迎来到智慧景区！我是您的AI数字人导游小智，很高兴为您服务。您对什么感兴趣呢？我可以为您推荐最适合的游览路线！',
-      timestamp: Date.now(),
-      emotion: 'happy',
-    })
-    router.push('/chat')
+    connectionError.value = '暂时无法连接导览服务，请确认 Docker Compose 已启动后重试。'
   } finally {
     isStarting.value = false
   }
@@ -92,6 +84,7 @@ async function startChat() {
       <button class="start-btn" @click="startChat" :disabled="isStarting">
         {{ isStarting ? '正在连接...' : '开始智能导览' }}
       </button>
+      <p v-if="connectionError" class="connection-error">{{ connectionError }}</p>
     </div>
   </div>
 </template>
@@ -133,6 +126,12 @@ async function startChat() {
 .subtitle {
   font-size: 16px;
   opacity: 0.9;
+}
+
+.connection-error {
+  margin-top: 12px;
+  color: #dc2626;
+  font-size: 14px;
 }
 
 .interest-section {

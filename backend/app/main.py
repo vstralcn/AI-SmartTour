@@ -3,7 +3,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import chat, knowledge, avatar, analytics, recommend
+from app.api import analytics, avatar, chat, knowledge, recommend
+from app.core.dialogue import dialogue_engine
 
 app = FastAPI(
     title="AI-SmartTour API",
@@ -14,7 +15,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -28,4 +29,9 @@ app.include_router(analytics.router, prefix="/api/v1", tags=["数据分析"])
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "ai-smarttour"}
+    return {
+        "status": "ok",
+        "service": "ai-smarttour",
+        "agent_mode": "single-orchestrator",
+        "knowledge_documents": len(dialogue_engine.rag.knowledge_base),
+    }

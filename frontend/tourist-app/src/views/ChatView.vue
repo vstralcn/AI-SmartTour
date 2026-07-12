@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useChatStore } from '../stores/chat'
+import {
+  useChatStore,
+  type AgentStep,
+  type ChatMessage,
+  type KnowledgeSource,
+} from '../stores/chat'
 import { createChatWebSocket } from '../services/api'
 import DigitalHuman from '../components/DigitalHuman/DigitalHuman.vue'
 import ChatPanel from '../components/ChatPanel/ChatPanel.vue'
@@ -34,33 +39,58 @@ function connectWebSocket() {
     }
 
     ws.value.onerror = () => {
-      console.warn('WebSocket连接失败，使用模拟模式')
+      console.warn('WebSocket连接失败')
     }
 
     ws.value.onclose = () => {
       console.log('WebSocket已断开')
     }
   } catch {
-    console.warn('WebSocket不可用，使用模拟模式')
+    console.warn('WebSocket不可用')
   }
+}
+
+function getAssistantDraft(): ChatMessage {
+  const lastMsg = chatStore.messages[chatStore.messages.length - 1]
+  if (lastMsg?.role === 'assistant') {
+    return lastMsg
+  }
+
+  const draft: ChatMessage = {
+    id: `bot-${Date.now()}`,
+    role: 'assistant',
+    content: '',
+    timestamp: Date.now(),
+    emotion: chatStore.currentEmotion,
+    agentSteps: [],
+    sources: [],
+  }
+  chatStore.addMessage(draft)
+  return draft
 }
 
 function handleServerMessage(data: {
   type: string
-  content: string
-  emotion?: string
+  content: string | AgentStep | KnowledgeSource[]
   done?: boolean
 }) {
   if (data.type === 'text_chunk') {
-    const lastMsg = chatStore.messages[chatStore.messages.length - 1]
-    if (lastMsg && lastMsg.role === 'assistant' && !data.done) {
-      lastMsg.content += data.content
-    } else if (data.done) {
+    if (data.done) {
       chatStore.setLoading(false)
       isSpeaking.value = false
+      return
     }
+    getAssistantDraft().content += data.content as string
   } else if (data.type === 'emotion') {
-    chatStore.setEmotion(data.content)
+    chatStore.setEmotion(data.content as string)
+  } else if (data.type === 'agent_step') {
+    getAssistantDraft().agentSteps?.push(data.content as AgentStep)
+  } else if (data.type === 'sources') {
+    getAssistantDraft().sources = data.content as KnowledgeSource[]
+  } else if (data.type === 'error') {
+    getAssistantDraft().content = `服务暂时不可用：${data.content as string}`
+    chatStore.setLoading(false)
+    isSpeaking.value = false
   }
 }
 
@@ -84,50 +114,21 @@ function handleSendMessage(text: string) {
       })
     )
   } else {
-    simulateResponse(text)
+    appendConnectionError()
   }
 }
 
-function simulateResponse(userText: string) {
-  const responses: Record<string, string> = {
-    default:
-      '这是一个很好的问题！让我为您详细介绍一下。这个景点有着悠久的历史，始建于明代，距今已有600多年的历史。这里不仅有精美的建筑，还蕴含着丰富的文化内涵。',
-    历史: '这里有着深厚的历史底蕴。据史料记载，早在唐代就已经是著名的游览胜地。历代文人墨客在此留下了大量诗词佳作，是了解中国传统文化的绝佳去处。',
-    美食: '说到美食，这里可是美食天堂！推荐您一定要尝尝本地特色小吃，还有传统手工制作的糕点，每一口都是匠心之作。景区内的餐厅"云水间"是最受游客欢迎的用餐地点。',
-    路线: '根据您的兴趣，我为您推荐以下游览路线：先参观入口处的历史展览馆（约30分钟），然后沿着古道前行至主景区（约1小时），最后到达观景台欣赏全景。全程约3小时。',
-  }
-
-  let responseText = responses.default
-  for (const [key, val] of Object.entries(responses)) {
-    if (userText.includes(key)) {
-      responseText = val
-      break
-    }
-  }
-
+function appendConnectionError() {
   chatStore.addMessage({
     id: `bot-${Date.now()}`,
     role: 'assistant',
-    content: '',
+    content: '导览服务连接已断开，请刷新页面或检查后端服务。',
     timestamp: Date.now(),
-    emotion: 'explaining',
+    emotion: 'caring',
   })
-
-  chatStore.setEmotion('explaining')
-
-  let idx = 0
-  const interval = setInterval(() => {
-    const lastMsg = chatStore.messages[chatStore.messages.length - 1]
-    if (lastMsg && idx < responseText.length) {
-      lastMsg.content += responseText[idx]
-      idx++
-    } else {
-      clearInterval(interval)
-      chatStore.setLoading(false)
-      isSpeaking.value = false
-      chatStore.setEmotion('neutral')
-    }
-  }, 50)
+  chatStore.setEmotion('caring')
+  chatStore.setLoading(false)
+  isSpeaking.value = false
 }
 
 function handleAudioReady(audio: Blob) {
@@ -154,7 +155,7 @@ function handleAudioReady(audio: Blob) {
     }
     reader.readAsDataURL(audio)
   } else {
-    simulateResponse('语音提问')
+    appendConnectionError()
   }
 }
 
