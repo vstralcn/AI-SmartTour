@@ -1,4 +1,5 @@
 import unittest
+import uuid
 
 from fastapi.testclient import TestClient
 
@@ -110,6 +111,40 @@ class APITest(unittest.TestCase):
 
         deleted = self.client.delete(f"/api/v1/admin/knowledge/{doc_id}")
         self.assertEqual(deleted.status_code, 200)
+
+    def test_session_greeting_uses_newly_activated_avatar(self) -> None:
+        original_avatar = self.client.get("/api/v1/avatar/active").json()
+        avatar_id = str(uuid.uuid4())
+        avatar_payload = {
+            **original_avatar,
+            "id": avatar_id,
+            "name": "赛测导游",
+            "is_active": False,
+        }
+
+        created = self.client.post(
+            "/api/v1/admin/avatar/config",
+            json=avatar_payload,
+        )
+        self.assertEqual(created.status_code, 200)
+
+        try:
+            activated = self.client.put(
+                f"/api/v1/admin/avatar/{avatar_id}/activate"
+            )
+            self.assertEqual(activated.status_code, 200)
+
+            session = self.client.post(
+                "/api/v1/sessions",
+                json={"interests": ["历史文化", "亲子游玩"]},
+            )
+            self.assertEqual(session.status_code, 200)
+            self.assertIn("我是您的AI导游赛测导游", session.json()["greeting"])
+        finally:
+            self.client.put(
+                f"/api/v1/admin/avatar/{original_avatar['id']}/activate"
+            )
+            self.client.delete(f"/api/v1/admin/avatar/{avatar_id}")
 
 
 if __name__ == "__main__":
