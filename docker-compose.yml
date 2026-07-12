@@ -10,6 +10,7 @@ services:
       DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-smarttour}@postgres:5432/smarttour"
       REDIS_URL: "redis://redis:6379/0"
       VECTOR_DB_PATH: "/app/knowledge_base/vectors"
+      KNOWLEDGE_UPLOAD_DIR: "/app/knowledge_base/uploads"
       LLM_API_KEY: "${LLM_API_KEY:-}"
       LLM_API_BASE: "${LLM_API_BASE:-https://dashscope.aliyuncs.com/compatible-mode/v1}"
       LLM_MODEL: "${LLM_MODEL:-qwen-plus}"

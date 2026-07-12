@@ -1,94 +1,143 @@
-"""知识库管理API"""
+"""知识库管理API。"""
 
+import logging
 import uuid
 from datetime import datetime
+from pathlib import Path
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from app.config import settings
 from app.core.rag import rag_engine
+from app.db.models import KnowledgeDocumentRecord
 from app.models.schemas import (
+    KnowledgeDocCreate,
     KnowledgeDocSchema,
+    KnowledgeDocUpdate,
     KnowledgeTestRequest,
     KnowledgeTestResponse,
 )
+from app.services.document_parser import parse_document
+from app.services.persistence import (
+    delete_knowledge_record,
+    get_knowledge_record,
+    list_knowledge_records,
+    save_knowledge_record,
+)
 
 router = APIRouter(prefix="/admin/knowledge")
+logger = logging.getLogger(__name__)
 
-_docs_store: list[KnowledgeDocSchema] = [
-    KnowledgeDocSchema(
-        id="1",
-        title="景区概况介绍",
-        category="景区信息",
-        content="本景区始建于明代...",
-        file_path="/docs/overview.pdf",
-        upload_time="2026-03-20 10:00",
-        status="active",
-    ),
-    KnowledgeDocSchema(
-        id="2",
-        title="古建筑群历史",
-        category="历史文化",
-        content="古建筑群占地面积...",
-        file_path="/docs/architecture.pdf",
-        upload_time="2026-03-20 10:15",
-        status="active",
-    ),
-    KnowledgeDocSchema(
-        id="3",
-        title="游览路线指南",
-        category="游览信息",
-        content="推荐路线一：经典路线...",
-        file_path="/docs/routes.pdf",
-        upload_time="2026-03-21 09:00",
-        status="active",
-    ),
-    KnowledgeDocSchema(
-        id="4",
-        title="常见问题FAQ",
-        category="FAQ",
-        content="开放时间：8:00-18:00...",
-        file_path="/docs/faq.pdf",
-        upload_time="2026-03-21 09:30",
-        status="active",
-    ),
-]
+
+def _to_schema(record: KnowledgeDocumentRecord) -> KnowledgeDocSchema:
+    return KnowledgeDocSchema(
+        id=record.id,
+        title=record.title,
+        category=record.category,
+        content=record.content,
+        file_path=record.file_path,
+        upload_time=record.upload_time.strftime("%Y-%m-%d %H:%M"),
+        status=record.status,
+        kind=record.kind,
+        source=record.source,
+        keywords=record.keywords,
+        tags=record.tags,
+    )
 
 
 @router.get("/list", response_model=list[KnowledgeDocSchema])
 async def list_docs():
-    return _docs_store
+    return [_to_schema(record) for record in await list_knowledge_records()]
+
+
+@router.post("/entries", response_model=KnowledgeDocSchema)
+async def create_entry(payload: KnowledgeDocCreate):
+    doc_id = str(uuid.uuid4())
+    record = KnowledgeDocumentRecord(
+        id=doc_id,
+        title=payload.title,
+        category=payload.category,
+        content=payload.content,
+        kind=payload.kind,
+        source=payload.source or payload.title,
+        keywords=payload.keywords,
+        tags=payload.tags,
+        status="active",
+    )
+    return _to_schema(await save_knowledge_record(record))
+
+
+@router.put("/{doc_id}", response_model=KnowledgeDocSchema)
+async def update_entry(doc_id: str, payload: KnowledgeDocUpdate):
+    existing = await get_knowledge_record(doc_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="知识条目不存在")
+    record = KnowledgeDocumentRecord(
+        id=doc_id,
+        title=payload.title,
+        category=payload.category,
+        content=payload.content,
+        kind=payload.kind,
+        source=payload.source or payload.title,
+        file_path=existing.file_path,
+        keywords=payload.keywords,
+        tags=payload.tags,
+        status=payload.status,
+        upload_time=existing.upload_time,
+        updated_at=datetime.now(),
+    )
+    return _to_schema(await save_knowledge_record(record))
 
 
 @router.post("/upload", response_model=KnowledgeDocSchema)
-async def upload_doc(file: UploadFile = File(...)):
+async def upload_doc(
+    file: UploadFile = File(...),
+    category: str = Form("待分类"),
+):
     content = await file.read()
-    text_content = content.decode("utf-8", errors="ignore")[:2000]
+    filename = Path(file.filename or "untitled.txt").name
+    try:
+        text_content = parse_document(filename, content)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
-    doc = KnowledgeDocSchema(
+    upload_dir = Path(settings.knowledge_upload_dir)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    stored_filename = f"{uuid.uuid4().hex}{Path(filename).suffix.lower()}"
+    file_path = upload_dir / stored_filename
+    file_path.write_bytes(content)
+
+    record = KnowledgeDocumentRecord(
         id=str(uuid.uuid4()),
-        title=file.filename or "untitled",
-        category="待分类",
+        title=Path(filename).stem,
+        category=category,
         content=text_content,
-        file_path=f"/uploads/{file.filename}",
-        upload_time=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        kind="document",
+        source=filename,
+        file_path=str(file_path),
+        keywords=[],
+        tags=[],
         status="active",
     )
-    _docs_store.append(doc)
-
-    rag_engine.add_document(
-        title=doc.title,
-        content=text_content,
-        category=doc.category,
-        tags=[],
-    )
-
-    return doc
+    try:
+        return _to_schema(await save_knowledge_record(record))
+    except Exception:
+        file_path.unlink(missing_ok=True)
+        raise
 
 
 @router.delete("/{doc_id}")
 async def delete_doc(doc_id: str):
-    global _docs_store
-    _docs_store = [d for d in _docs_store if d.id != doc_id]
+    existing = await get_knowledge_record(doc_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="知识条目不存在")
+    if not await delete_knowledge_record(doc_id):
+        raise HTTPException(status_code=404, detail="知识条目不存在")
+    if existing.file_path:
+        try:
+            Path(existing.file_path).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("无法删除知识库原始文件: %s", existing.file_path)
     return {"status": "ok"}
 
 

@@ -7,7 +7,12 @@ import {
   type ChatMessage,
   type KnowledgeSource,
 } from '../stores/chat'
-import { createChatWebSocket } from '../services/api'
+import {
+  createChatWebSocket,
+  getActiveAvatar,
+  type AvatarConfig,
+} from '../services/api'
+import { cancelSpeech, speakText } from '../services/speech'
 import DigitalHuman from '../components/DigitalHuman/DigitalHuman.vue'
 import ChatPanel from '../components/ChatPanel/ChatPanel.vue'
 import VoiceInput from '../components/VoiceInput/VoiceInput.vue'
@@ -15,18 +20,50 @@ import VoiceInput from '../components/VoiceInput/VoiceInput.vue'
 const router = useRouter()
 const chatStore = useChatStore()
 const isSpeaking = ref(false)
+const isThinking = ref(false)
+const voiceEnabled = ref(true)
 const ws = ref<WebSocket | null>(null)
+const activeAvatar = ref<AvatarConfig>({
+  id: 'xiaozhi',
+  name: '小智',
+  appearance: {
+    image_url: '/avatars/xiaozhi.png',
+    style: '现代国风',
+  },
+  voice_config: {
+    voice_id: 'female-1',
+    speed: 1,
+    pitch: 1.05,
+  },
+  personality: '热情开朗，善于讲故事',
+  gender: '女',
+  clothing: '现代导游服',
+  speaking_style: '亲切活泼',
+  is_active: true,
+})
 
-onMounted(() => {
+onMounted(async () => {
   if (!chatStore.sessionId) {
     router.push('/')
     return
   }
+  try {
+    activeAvatar.value = await getActiveAvatar()
+  } catch {
+    console.warn('使用本地默认数字人配置')
+  }
   connectWebSocket()
+  const greeting = chatStore.messages.find(
+    (message) => message.role === 'assistant'
+  )
+  if (greeting) {
+    speakResponse(greeting.content)
+  }
 })
 
 onUnmounted(() => {
   ws.value?.close()
+  cancelSpeech()
 })
 
 function connectWebSocket() {
@@ -77,7 +114,11 @@ function handleServerMessage(data: {
   if (data.type === 'text_chunk') {
     if (data.done) {
       chatStore.setLoading(false)
-      isSpeaking.value = false
+      isThinking.value = false
+      const message = chatStore.messages[chatStore.messages.length - 1]
+      if (message?.role === 'assistant') {
+        speakResponse(message.content)
+      }
       return
     }
     getAssistantDraft().content += data.content as string
@@ -90,11 +131,44 @@ function handleServerMessage(data: {
   } else if (data.type === 'error') {
     getAssistantDraft().content = `服务暂时不可用：${data.content as string}`
     chatStore.setLoading(false)
+    isThinking.value = false
+    isSpeaking.value = false
+  }
+}
+
+function speakResponse(text: string) {
+  if (!voiceEnabled.value) {
+    isSpeaking.value = false
+    return
+  }
+  const started = speakText(
+    text,
+    activeAvatar.value.voice_config,
+    {
+      onStart: () => {
+        isSpeaking.value = true
+      },
+      onEnd: () => {
+        isSpeaking.value = false
+      },
+    }
+  )
+  if (!started) {
+    isSpeaking.value = false
+  }
+}
+
+function toggleVoice() {
+  voiceEnabled.value = !voiceEnabled.value
+  if (!voiceEnabled.value) {
+    cancelSpeech()
     isSpeaking.value = false
   }
 }
 
 function handleSendMessage(text: string) {
+  cancelSpeech()
+  isSpeaking.value = false
   chatStore.addMessage({
     id: `user-${Date.now()}`,
     role: 'user',
@@ -103,7 +177,7 @@ function handleSendMessage(text: string) {
   })
 
   chatStore.setLoading(true)
-  isSpeaking.value = true
+  isThinking.value = true
 
   if (ws.value && ws.value.readyState === WebSocket.OPEN) {
     ws.value.send(
@@ -128,38 +202,12 @@ function appendConnectionError() {
   })
   chatStore.setEmotion('caring')
   chatStore.setLoading(false)
+  isThinking.value = false
   isSpeaking.value = false
 }
 
-function handleAudioReady(audio: Blob) {
-  chatStore.addMessage({
-    id: `user-${Date.now()}`,
-    role: 'user',
-    content: '[语音消息]',
-    timestamp: Date.now(),
-  })
-
-  chatStore.setLoading(true)
-  isSpeaking.value = true
-
-  if (ws.value && ws.value.readyState === WebSocket.OPEN) {
-    const reader = new FileReader()
-    reader.onload = () => {
-      ws.value?.send(
-        JSON.stringify({
-          type: 'audio',
-          content: reader.result,
-          session_id: chatStore.sessionId,
-        })
-      )
-    }
-    reader.readAsDataURL(audio)
-  } else {
-    appendConnectionError()
-  }
-}
-
 function goBack() {
+  cancelSpeech()
   chatStore.clearMessages()
   router.push('/')
 }
@@ -170,9 +218,14 @@ function goBack() {
     <header class="chat-header">
       <button class="back-btn" @click="goBack">&larr;</button>
       <h1>AI智能导游</h1>
-      <button class="route-btn" @click="router.push('/route-plan')">
-        路线推荐
-      </button>
+      <div class="header-actions">
+        <button class="voice-toggle" @click="toggleVoice">
+          {{ voiceEnabled ? '语音播报开' : '语音播报关' }}
+        </button>
+        <button class="route-btn" @click="router.push('/route-plan')">
+          路线推荐
+        </button>
+      </div>
     </header>
 
     <div class="chat-body">
@@ -180,13 +233,18 @@ function goBack() {
         <DigitalHuman
           :emotion="chatStore.currentEmotion"
           :is-speaking="isSpeaking"
+          :is-thinking="isThinking"
+          :avatar-url="activeAvatar.appearance.image_url"
+          :name="activeAvatar.name"
+          :style="`${activeAvatar.clothing} · ${activeAvatar.speaking_style}`"
+          :introduction="activeAvatar.personality"
         />
       </div>
 
       <div class="chat-section">
         <ChatPanel @send="handleSendMessage" />
         <div class="voice-section">
-          <VoiceInput @audio-ready="handleAudioReady" />
+          <VoiceInput @transcript="handleSendMessage" />
         </div>
       </div>
     </div>
@@ -234,6 +292,22 @@ function goBack() {
   font-size: 13px;
   cursor: pointer;
   font-weight: 500;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-toggle {
+  border: none;
+  border-radius: 8px;
+  background: #ecfdf5;
+  color: #047857;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .chat-body {

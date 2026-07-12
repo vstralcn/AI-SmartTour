@@ -2,6 +2,7 @@
 
 import json
 import re
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,6 +58,14 @@ class RAGEngine:
             self.knowledge_base = self._default_knowledge()
         if not self.faq:
             self.faq = self._default_faq()
+        self.knowledge_base = [
+            self._normalize_entry(item, "document", index)
+            for index, item in enumerate(self.knowledge_base)
+        ]
+        self.faq = [
+            self._normalize_entry(item, "faq", index)
+            for index, item in enumerate(self.faq)
+        ]
 
     def retrieve(self, query: str, top_k: int = 3) -> str:
         result = self.retrieve_with_sources(query, top_k)
@@ -109,7 +118,7 @@ class RAGEngine:
             if any(kw in query for kw in keywords):
                 return KnowledgeEvidence(
                     title=item.get("title", "常见问题 FAQ"),
-                    content=item["answer"],
+                    content=item["content"],
                     category=item.get("category", "FAQ"),
                     score=1.0,
                     source=item.get("source", "景区常见问题"),
@@ -167,14 +176,73 @@ class RAGEngine:
         return {text[index : index + 2] for index in range(len(text) - 1)}
 
     def add_document(self, title: str, content: str, category: str, tags: list[str]):
-        self.knowledge_base.append(
+        entry_id = str(uuid.uuid4())
+        self.upsert_entry(
             {
+                "id": entry_id,
                 "title": title,
                 "content": content,
                 "category": category,
                 "tags": tags,
+                "keywords": [],
+                "kind": "document",
+                "source": title,
+                "status": "active",
             }
         )
+        return entry_id
+
+    def replace_entries(self, entries: list[dict]) -> None:
+        active_entries = [
+            self._normalize_entry(entry, str(entry.get("kind", "document")), index)
+            for index, entry in enumerate(entries)
+            if entry.get("status", "active") == "active"
+        ]
+        self.knowledge_base = [
+            entry for entry in active_entries if entry["kind"] != "faq"
+        ]
+        self.faq = [entry for entry in active_entries if entry["kind"] == "faq"]
+
+    def upsert_entry(self, entry: dict) -> None:
+        normalized = self._normalize_entry(
+            entry,
+            str(entry.get("kind", "document")),
+            0,
+        )
+        target = self.faq if normalized["kind"] == "faq" else self.knowledge_base
+        target[:] = [item for item in target if item["id"] != normalized["id"]]
+        if normalized["status"] == "active":
+            target.append(normalized)
+
+    def delete_entry(self, entry_id: str) -> None:
+        self.knowledge_base = [
+            item for item in self.knowledge_base if item["id"] != entry_id
+        ]
+        self.faq = [item for item in self.faq if item["id"] != entry_id]
+        self.faq = [item for item in self.faq if item["id"] != entry_id]
+
+    def export_entries(self) -> list[dict]:
+        return [dict(entry) for entry in [*self.knowledge_base, *self.faq]]
+
+    @staticmethod
+    def _normalize_entry(item: dict, kind: str, index: int) -> dict:
+        content = str(item.get("content") or item.get("answer") or "")
+        title = str(item.get("title") or ("常见问题 FAQ" if kind == "faq" else "景区知识"))
+        category = str(item.get("category") or ("FAQ" if kind == "faq" else "景区知识"))
+        return {
+            "id": str(item.get("id") or f"default-{kind}-{index + 1}"),
+            "title": title,
+            "content": content,
+            "category": category,
+            "tags": list(item.get("tags", [])),
+            "keywords": list(item.get("keywords", [])),
+            "kind": kind,
+            "source": str(
+                item.get("source")
+                or ("景区常见问题" if kind == "faq" else title)
+            ),
+            "status": str(item.get("status", "active")),
+        }
 
     def _default_knowledge(self) -> list[dict]:
         return [

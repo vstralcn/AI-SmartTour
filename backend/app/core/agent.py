@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from app.core.rag import KnowledgeEvidence, RAGEngine
-from app.core.recommend import recommend_route
+from app.core.recommend import SCENIC_SPOTS, recommend_route
 
 INTEREST_LABELS = (
     "历史文化",
@@ -51,6 +51,7 @@ class AgentExecution:
     grounded_answer: str = ""
     direct_response: str = ""
     confidence: float = 0.0
+    route_spots: list[str] = field(default_factory=list)
 
 
 class GuideAgent:
@@ -61,17 +62,43 @@ class GuideAgent:
         self.user_profiles: dict[str, dict[str, object]] = {}
         self.feedback_records: list[dict[str, str]] = []
 
-    def create_profile(self, session_id: str, interests: list[str] | None = None) -> None:
+    def create_profile(
+        self,
+        session_id: str,
+        interests: list[str] | None = None,
+        age_group: str = "成人",
+        companions: list[str] | None = None,
+        mobility: str = "标准",
+        visit_duration: float = 3.0,
+        guide_name: str = "小智",
+        guide_personality: str = "热情开朗，知识渊博",
+        speaking_style: str = "亲切自然",
+    ) -> None:
         self.user_profiles[session_id] = {
             "interests": list(dict.fromkeys(interests or [])),
-            "visit_duration": 3.0,
+            "age_group": age_group,
+            "companions": list(dict.fromkeys(companions or [])),
+            "mobility": mobility,
+            "visit_duration": visit_duration,
+            "last_spot": "",
+            "guide_name": guide_name,
+            "guide_personality": guide_personality,
+            "speaking_style": speaking_style,
         }
 
     def execute(self, session_id: str, message: str) -> AgentExecution:
         profile = self.user_profiles.setdefault(
             session_id,
-            {"interests": [], "visit_duration": 3.0},
+            {
+                "interests": [],
+                "age_group": "成人",
+                "companions": [],
+                "mobility": "标准",
+                "visit_duration": 3.0,
+                "last_spot": "",
+            },
         )
+        message = self._resolve_context(profile, message)
         profile_step = self._update_profile(profile, message)
         intent = self._classify_intent(message)
 
@@ -84,6 +111,7 @@ class GuideAgent:
 
         if profile_step:
             execution.steps.insert(0, profile_step)
+        self._remember_spot(profile, message)
         return execution
 
     @staticmethod
@@ -104,14 +132,37 @@ class GuideAgent:
             if keyword in message
         )
         merged = list(dict.fromkeys([*current, *detected]))
-        if merged == current:
+        companions = list(profile.get("companions", []))
+        if any(keyword in message for keyword in ("孩子", "儿童", "亲子")):
+            companions.append("儿童")
+        if any(keyword in message for keyword in ("老人", "长辈", "父母")):
+            companions.append("老人")
+        companions = list(dict.fromkeys(companions))
+        mobility = str(profile.get("mobility", "标准"))
+        if any(keyword in message for keyword in ("少走路", "腿脚", "低强度", "轮椅")):
+            mobility = "低强度"
+
+        if (
+            merged == current
+            and companions == list(profile.get("companions", []))
+            and mobility == profile.get("mobility", "标准")
+        ):
             return None
 
         profile["interests"] = merged
+        profile["companions"] = companions
+        profile["mobility"] = mobility
+        details = []
+        if merged:
+            details.append(f"兴趣：{'、'.join(merged)}")
+        if companions:
+            details.append(f"同行：{'、'.join(companions)}")
+        if mobility != "标准":
+            details.append(f"强度：{mobility}")
         return AgentStep(
             tool="profile",
             status="completed",
-            detail=f"已更新兴趣画像：{'、'.join(merged)}",
+            detail=f"已更新游客画像：{'；'.join(details)}",
         )
 
     @staticmethod
@@ -132,7 +183,14 @@ class GuideAgent:
             profile["visit_duration"] = duration
 
         interests = list(profile.get("interests", []))
-        route, description = recommend_route(duration_hours=duration, interests=interests)
+        companions = list(profile.get("companions", []))
+        mobility = str(profile.get("mobility", "标准"))
+        route, description = recommend_route(
+            duration_hours=duration,
+            interests=interests,
+            companions=companions,
+            mobility=mobility,
+        )
         route_lines = [
             f"{index}. {spot['name']}（约 {spot['recommended_duration']} 分钟）"
             for index, spot in enumerate(route, start=1)
@@ -144,7 +202,9 @@ class GuideAgent:
                 *route_lines,
                 "",
                 f"规划依据：游览时长 {duration:g} 小时"
-                + (f"，兴趣偏好 {'、'.join(interests)}" if interests else "，综合游览"),
+                + (f"，兴趣偏好 {'、'.join(interests)}" if interests else "，综合游览")
+                + (f"，同行人员 {'、'.join(companions)}" if companions else "")
+                + (f"，游览强度 {mobility}" if mobility != "标准" else ""),
             ]
         )
         return AgentExecution(
@@ -158,7 +218,25 @@ class GuideAgent:
             ],
             direct_response=response,
             confidence=1.0,
+            route_spots=[str(spot["name"]) for spot in route],
         )
+
+    @staticmethod
+    def _resolve_context(profile: dict[str, object], message: str) -> str:
+        last_spot = str(profile.get("last_spot", ""))
+        if last_spot and any(
+            reference in message
+            for reference in ("这个景点", "那里", "它", "附近")
+        ):
+            return f"关于{last_spot}，{message}"
+        return message
+
+    @staticmethod
+    def _remember_spot(profile: dict[str, object], message: str) -> None:
+        for spot in SCENIC_SPOTS:
+            if str(spot["name"]) in message:
+                profile["last_spot"] = str(spot["name"])
+                return
 
     def _query_knowledge(self, message: str) -> AgentExecution:
         result = self.rag.retrieve_with_sources(message)

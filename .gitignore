@@ -8,6 +8,9 @@ build/
 .venv/
 venv/
 .env
+.pytest_cache/
+.ruff_cache/
+*.db
 
 # Node.js
 node_modules/
@@ -33,6 +36,8 @@ Thumbs.db
 
 # Knowledge base vectors
 backend/knowledge_base/vectors/
+backend/knowledge_base/uploads/
+backend/uploads/
 
 # Logs
 *.log

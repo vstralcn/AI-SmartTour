@@ -72,9 +72,12 @@ SCENIC_SPOTS = [
 def recommend_route(
     duration_hours: float = 3,
     interests: list[str] | None = None,
+    companions: list[str] | None = None,
+    mobility: str = "标准",
 ) -> tuple[list[dict], str]:
-    """根据游览时长和兴趣推荐路线"""
+    """根据游览时长、兴趣和同行约束推荐路线。"""
     interests = interests or []
+    companions = companions or []
     available_minutes = int(duration_hours * 60)
 
     scored = []
@@ -82,6 +85,19 @@ def recommend_route(
         score = 1.0
         for interest in interests:
             if interest in spot["tags"]:
+                score += 4.0
+        if "儿童" in companions and any(
+            tag in spot["tags"] for tag in ("亲子游玩", "互动")
+        ):
+            score += 4.0
+        if "老人" in companions and any(
+            tag in spot["tags"] for tag in ("休闲", "服务")
+        ):
+            score += 2.0
+        if mobility == "低强度":
+            if spot["name"] == "观景台":
+                score -= 4.0
+            if any(tag in spot["tags"] for tag in ("休闲", "服务")):
                 score += 2.0
         scored.append((score, spot))
 
@@ -90,6 +106,8 @@ def recommend_route(
     route = []
     total_minutes = 0
     for _score, spot in scored:
+        if _score <= 0:
+            continue
         if total_minutes + spot["recommended_duration"] <= available_minutes:
             route.append(spot)
             total_minutes += spot["recommended_duration"]
@@ -108,5 +126,12 @@ def recommend_route(
             f"为您规划了约{duration_text}小时的综合游览路线，"
             f"涵盖{len(route)}个精华景点，预计游览时间{total_minutes}分钟。"
         )
+    constraints = []
+    if companions:
+        constraints.append(f"同行人员：{'、'.join(companions)}")
+    if mobility != "标准":
+        constraints.append(f"游览强度：{mobility}")
+    if constraints:
+        desc += f" 已纳入{'；'.join(constraints)}约束。"
 
     return route, desc

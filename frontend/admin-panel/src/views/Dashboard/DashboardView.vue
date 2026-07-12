@@ -24,53 +24,20 @@ use([
 ])
 
 const dashboardData = ref<DashboardData | null>(null)
-
-const demoDashboard: DashboardData = {
-  today_visitors: 1283,
-  weekly_visitors: 8742,
-  total_sessions: 45892,
-  avg_satisfaction: 4.6,
-  hot_questions: [
-    { question: '景区开放时间是什么？', count: 342 },
-    { question: '门票价格多少？', count: 278 },
-    { question: '推荐游览路线？', count: 256 },
-    { question: '附近有什么餐厅？', count: 198 },
-    { question: '景区有哪些历史故事？', count: 176 },
-  ],
-  satisfaction_trend: [
-    { date: '周一', score: 4.5 },
-    { date: '周二', score: 4.6 },
-    { date: '周三', score: 4.4 },
-    { date: '周四', score: 4.7 },
-    { date: '周五', score: 4.8 },
-    { date: '周六', score: 4.6 },
-    { date: '周日', score: 4.5 },
-  ],
-  hourly_visits: Array.from({ length: 24 }, (_, i) => ({
-    hour: i,
-    count: Math.max(0, Math.floor(80 * Math.sin(((i - 6) / 12) * Math.PI) + Math.random() * 20)),
-  })),
-  spot_popularity: [
-    { name: '古建筑群', visits: 890 },
-    { name: '山水园林', visits: 756 },
-    { name: '文化体验馆', visits: 634 },
-    { name: '观景台', visits: 521 },
-    { name: '入口广场', visits: 412 },
-  ],
-}
-
-const satisfactionChartOption = ref({})
+const loadError = ref('')
+const responseChartOption = ref({})
 const visitsChartOption = ref({})
 const spotChartOption = ref({})
+const routePreferenceOption = ref({})
 
 function buildCharts(data: DashboardData) {
-  satisfactionChartOption.value = {
+  responseChartOption.value = {
     tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: data.satisfaction_trend.map((d) => d.date) },
-    yAxis: { type: 'value', min: 3, max: 5 },
+    xAxis: { type: 'category', data: data.response_time_trend.map((d) => d.date) },
+    yAxis: { type: 'value', name: '毫秒' },
     series: [
       {
-        data: data.satisfaction_trend.map((d) => d.score),
+        data: data.response_time_trend.map((d) => d.value),
         type: 'line',
         smooth: true,
         areaStyle: { color: 'rgba(79, 70, 229, 0.1)' },
@@ -122,22 +89,48 @@ function buildCharts(data: DashboardData) {
       },
     ],
   }
+
+  routePreferenceOption.value = {
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'value' },
+    yAxis: {
+      type: 'category',
+      data: data.route_preferences.map((item) => item.name).reverse(),
+    },
+    series: [
+      {
+        type: 'bar',
+        data: data.route_preferences.map((item) => item.count).reverse(),
+        itemStyle: { color: '#0ea5e9', borderRadius: [0, 4, 4, 0] },
+      },
+    ],
+  }
 }
 
 onMounted(async () => {
   try {
     dashboardData.value = await getDashboardData()
+    buildCharts(dashboardData.value)
   } catch {
-    dashboardData.value = demoDashboard
+    loadError.value = '运营数据加载失败，请检查后端和数据库状态。'
   }
-  buildCharts(dashboardData.value!)
 })
 </script>
 
 <template>
-  <div class="dashboard" v-if="dashboardData">
-    <h1 class="page-title">数据大屏</h1>
+  <div class="dashboard">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">数据大屏</h1>
+        <p v-if="dashboardData">
+          实时业务数据 · 更新于 {{ dashboardData.generated_at }}
+        </p>
+      </div>
+      <el-tag v-if="dashboardData" type="success">真实会话聚合</el-tag>
+    </div>
+    <el-alert v-if="loadError" :title="loadError" type="error" show-icon />
 
+    <template v-if="dashboardData">
     <div class="stat-cards">
       <div class="stat-card">
         <div class="stat-value">{{ dashboardData.today_visitors.toLocaleString() }}</div>
@@ -152,15 +145,23 @@ onMounted(async () => {
         <div class="stat-label">累计会话数</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value">{{ dashboardData.avg_satisfaction }}</div>
-        <div class="stat-label">平均满意度</div>
+        <div class="stat-value">{{ dashboardData.avg_response_ms }}ms</div>
+        <div class="stat-label">平均响应时间</div>
+      </div>
+      <div class="stat-card warning">
+        <div class="stat-value">{{ dashboardData.knowledge_gap_count }}</div>
+        <div class="stat-label">知识缺口</div>
+      </div>
+      <div class="stat-card danger">
+        <div class="stat-value">{{ dashboardData.negative_feedback_count }}</div>
+        <div class="stat-label">负面情绪咨询</div>
       </div>
     </div>
 
     <div class="charts-row">
       <div class="chart-card">
-        <h3>满意度趋势</h3>
-        <v-chart :option="satisfactionChartOption" style="height: 280px" />
+        <h3>近 7 日平均响应时间</h3>
+        <v-chart :option="responseChartOption" style="height: 280px" />
       </div>
       <div class="chart-card">
         <h3>每小时访问量</h3>
@@ -170,24 +171,30 @@ onMounted(async () => {
 
     <div class="charts-row">
       <div class="chart-card">
+        <h3>路线偏好</h3>
+        <v-chart :option="routePreferenceOption" style="height: 280px" />
+      </div>
+      <div class="chart-card">
         <h3>景点热度排行</h3>
         <v-chart :option="spotChartOption" style="height: 280px" />
       </div>
-      <div class="chart-card">
-        <h3>热门问答 Top5</h3>
-        <div class="hot-questions">
-          <div
-            v-for="(q, i) in dashboardData.hot_questions"
-            :key="i"
-            class="question-item"
-          >
-            <span class="question-rank" :class="`rank-${i + 1}`">{{ i + 1 }}</span>
-            <span class="question-text">{{ q.question }}</span>
-            <span class="question-count">{{ q.count }}次</span>
-          </div>
+    </div>
+    <div class="chart-card hot-question-card">
+      <h3>热门问答 Top5</h3>
+      <div class="hot-questions" v-if="dashboardData.hot_questions.length">
+        <div
+          v-for="(q, i) in dashboardData.hot_questions"
+          :key="i"
+          class="question-item"
+        >
+          <span class="question-rank" :class="`rank-${i + 1}`">{{ i + 1 }}</span>
+          <span class="question-text">{{ q.question }}</span>
+          <span class="question-count">{{ q.count }}次</span>
         </div>
       </div>
+      <p class="empty-state" v-else>游客端产生真实咨询后将自动统计。</p>
     </div>
+    </template>
   </div>
 </template>
 
@@ -200,12 +207,24 @@ onMounted(async () => {
   font-size: 24px;
   font-weight: 700;
   color: #1f2937;
+  margin-bottom: 4px;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 24px;
+}
+
+.page-header p {
+  color: #6b7280;
+  font-size: 13px;
 }
 
 .stat-cards {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -228,6 +247,14 @@ onMounted(async () => {
 .stat-label {
   font-size: 14px;
   color: #6b7280;
+}
+
+.stat-card.warning .stat-value {
+  color: #d97706;
+}
+
+.stat-card.danger .stat-value {
+  color: #dc2626;
 }
 
 .charts-row {
@@ -256,6 +283,16 @@ onMounted(async () => {
   flex-direction: column;
   gap: 12px;
   padding: 8px 0;
+}
+
+.hot-question-card {
+  margin-bottom: 16px;
+}
+
+.empty-state {
+  padding: 32px;
+  color: #9ca3af;
+  text-align: center;
 }
 
 .question-item {
@@ -294,5 +331,12 @@ onMounted(async () => {
   font-size: 13px;
   color: #6b7280;
   flex-shrink: 0;
+}
+
+@media (max-width: 960px) {
+  .stat-cards,
+  .charts-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

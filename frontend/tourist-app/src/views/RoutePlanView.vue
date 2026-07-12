@@ -6,67 +6,29 @@ import { getRecommendedRoute, type ScenicSpot } from '../services/api'
 
 const router = useRouter()
 const chatStore = useChatStore()
-const duration = ref(3)
+const duration = ref(chatStore.userProfile.visitDuration)
 const isLoading = ref(false)
 const recommendedRoute = ref<ScenicSpot[]>([])
 const routeDescription = ref('')
-
-const demoRoute: ScenicSpot[] = [
-  {
-    id: '1',
-    name: '景区入口广场',
-    description: '景区标志性建筑，可以了解景区全貌和历史沿革',
-    category: '文化景观',
-    recommended_duration: 20,
-    tags: ['历史', '地标'],
-  },
-  {
-    id: '2',
-    name: '古建筑群',
-    description: '保存完好的明清古建筑，展现传统建筑艺术之美',
-    category: '历史遗迹',
-    recommended_duration: 45,
-    tags: ['历史文化', '建筑'],
-  },
-  {
-    id: '3',
-    name: '山水园林',
-    description: '融合江南园林精髓，亭台楼阁错落有致',
-    category: '自然风光',
-    recommended_duration: 40,
-    tags: ['自然', '园林'],
-  },
-  {
-    id: '4',
-    name: '文化体验馆',
-    description: '沉浸式体验传统文化，可参与手工艺制作',
-    category: '互动体验',
-    recommended_duration: 35,
-    tags: ['体验', '互动'],
-  },
-  {
-    id: '5',
-    name: '观景台',
-    description: '景区最高点，可俯瞰全景，是最佳摄影点',
-    category: '观景',
-    recommended_duration: 30,
-    tags: ['观景', '摄影'],
-  },
-]
+const routeError = ref('')
 
 async function generateRoute() {
   isLoading.value = true
+  routeError.value = ''
   try {
     const resp = await getRecommendedRoute({
       session_id: chatStore.sessionId,
       duration_hours: duration.value,
       interests: chatStore.userProfile.interests,
+      companions: chatStore.userProfile.companions,
+      mobility: chatStore.userProfile.mobility,
     })
     recommendedRoute.value = resp.route
     routeDescription.value = resp.description
   } catch {
-    recommendedRoute.value = demoRoute
-    routeDescription.value = `根据您对${chatStore.userProfile.interests.join('、') || '综合游览'}的兴趣，为您规划了约${duration.value}小时的游览路线。路线涵盖景区精华景点，兼顾文化体验和自然风光。`
+    recommendedRoute.value = []
+    routeDescription.value = ''
+    routeError.value = '路线服务暂时不可用，请检查后端服务后重试。'
   } finally {
     isLoading.value = false
   }
@@ -108,9 +70,20 @@ async function generateRoute() {
         </div>
       </div>
 
+      <div class="config-item">
+        <label>画像约束</label>
+        <div class="tags">
+          <span class="tag" v-for="item in chatStore.userProfile.companions" :key="item">
+            同行：{{ item }}
+          </span>
+          <span class="tag">强度：{{ chatStore.userProfile.mobility }}</span>
+        </div>
+      </div>
+
       <button class="generate-btn" @click="generateRoute" :disabled="isLoading">
         {{ isLoading ? '生成中...' : '生成推荐路线' }}
       </button>
+      <p v-if="routeError" class="route-error">{{ routeError }}</p>
     </div>
 
     <div class="route-result" v-if="recommendedRoute.length">
@@ -242,6 +215,12 @@ async function generateRoute() {
 .generate-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.route-error {
+  margin-top: 12px;
+  color: #dc2626;
+  font-size: 13px;
 }
 
 .route-result {
