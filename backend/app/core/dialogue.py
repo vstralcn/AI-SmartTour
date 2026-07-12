@@ -5,7 +5,8 @@ from collections import defaultdict
 from typing import AsyncGenerator
 
 from app.config import settings
-from app.core.rag import RAGEngine
+from app.core.agent import AgentExecution, GuideAgent
+from app.core.rag import rag_engine
 
 SYSTEM_PROMPT = """你是智慧景区的AI数字人导游"小智"，性格热情开朗、知识渊博。
 
@@ -15,6 +16,7 @@ SYSTEM_PROMPT = """你是智慧景区的AI数字人导游"小智"，性格热情
 3. 适当加入趣味性的讲解（历史典故、民间传说等）
 4. 如果参考知识中没有相关信息，坦诚告知并引导游客咨询工作人员
 5. 根据游客的兴趣偏好调整讲解深度和方向
+6. 使用参考知识编号标注依据，例如[1]；不得引用不存在的编号
 
 游客兴趣：{interests}
 """
@@ -25,12 +27,12 @@ class DialogueEngine:
 
     def __init__(self):
         self.sessions: dict[str, list[dict]] = defaultdict(list)
-        self.user_profiles: dict[str, dict] = {}
-        self.rag = RAGEngine()
+        self.rag = rag_engine
+        self.agent = GuideAgent(self.rag)
 
     def create_session(self, interests: list[str] | None = None) -> tuple[str, str]:
         session_id = str(uuid.uuid4())
-        self.user_profiles[session_id] = {"interests": interests or []}
+        self.agent.create_profile(session_id, interests)
         greeting = self._generate_greeting(interests or [])
         self.sessions[session_id].append({"role": "assistant", "content": greeting})
         return session_id, greeting
@@ -50,25 +52,44 @@ class DialogueEngine:
             "也能根据您的兴趣推荐个性化的游览路线。有什么想问的吗？"
         )
 
+    def prepare(self, session_id: str, user_message: str) -> AgentExecution:
+        return self.agent.execute(session_id, user_message)
+
     async def chat(
-        self, session_id: str, user_message: str
+        self,
+        session_id: str,
+        user_message: str,
+        execution: AgentExecution,
     ) -> AsyncGenerator[str, None]:
         self.sessions[session_id].append({"role": "user", "content": user_message})
 
-        context = self.rag.retrieve(user_message)
+        if execution.direct_response:
+            yield execution.direct_response
+            self.sessions[session_id].append(
+                {"role": "assistant", "content": execution.direct_response}
+            )
+            return
 
-        interests = self.user_profiles.get(session_id, {}).get("interests", [])
+        profile = self.agent.user_profiles.get(session_id, {})
+        interests = list(profile.get("interests", []))
         system_msg = SYSTEM_PROMPT.format(interests="、".join(interests) if interests else "综合")
 
-        if context:
-            system_msg += f"\n\n【参考知识】\n{context}"
+        if execution.context:
+            system_msg += f"\n\n【参考知识】\n{execution.context}"
 
         messages = [{"role": "system", "content": system_msg}]
         history = self.sessions[session_id][-10:]
         messages.extend(history)
 
+        if not settings.llm_api_key:
+            yield execution.grounded_answer
+            self.sessions[session_id].append(
+                {"role": "assistant", "content": execution.grounded_answer}
+            )
+            return
+
         full_response = ""
-        async for chunk in self._call_llm_stream(messages):
+        async for chunk in self._call_llm_stream(messages, execution.grounded_answer):
             full_response += chunk
             yield chunk
 
@@ -77,7 +98,9 @@ class DialogueEngine:
         )
 
     async def _call_llm_stream(
-        self, messages: list[dict]
+        self,
+        messages: list[dict],
+        fallback_text: str,
     ) -> AsyncGenerator[str, None]:
         try:
             import openai
@@ -97,29 +120,7 @@ class DialogueEngine:
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
         except Exception:
-            yield self._fallback_response(messages[-1]["content"])
-
-    def _fallback_response(self, user_msg: str) -> str:
-        responses = {
-            "历史": "这里有着深厚的历史底蕴。据史料记载，早在唐代就已经是著名的游览胜地。"
-            "历代文人墨客在此留下了大量诗词佳作，是了解中国传统文化的绝佳去处。",
-            "美食": "说到美食，这里可是美食天堂！推荐您一定要尝尝本地特色小吃，"
-            "还有传统手工制作的糕点。景区内的餐厅是最受游客欢迎的用餐地点。",
-            "路线": "根据您的兴趣，我推荐以下路线：先参观入口处的历史展览馆（约30分钟），"
-            "然后沿着古道前行至主景区（约1小时），最后到达观景台欣赏全景。全程约3小时。",
-            "门票": "景区门票价格为成人80元/人，学生及60岁以上老人可享半价优惠。"
-            "开放时间为每日8:00-18:00。",
-            "时间": "景区开放时间为每日8:00-18:00，建议上午入园，可以充分游览。"
-            "旺季（5-10月）建议提前网上预约购票。",
-        }
-        for key, val in responses.items():
-            if key in user_msg:
-                return val
-        return (
-            "这是一个很好的问题！这个景区有着丰富的历史文化底蕴，"
-            "您可以在这里感受到传统与现代的完美融合。"
-            "如果您想了解更详细的信息，可以告诉我您最感兴趣的方面。"
-        )
+            yield fallback_text
 
 
 dialogue_engine = DialogueEngine()

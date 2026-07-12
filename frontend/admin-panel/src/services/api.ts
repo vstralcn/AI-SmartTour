@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE || ''
 
 const api = axios.create({
   baseURL: `${API_BASE}/api/v1/admin`,
@@ -35,7 +35,20 @@ export async function deleteKnowledgeDoc(id: string): Promise<void> {
   await api.delete(`/knowledge/${id}`)
 }
 
-export async function testKnowledge(question: string): Promise<{ answer: string; sources: string[] }> {
+export interface KnowledgeEvidence {
+  title: string
+  category: string
+  score: number
+  source: string
+  excerpt: string
+}
+
+export async function testKnowledge(question: string): Promise<{
+  answer: string
+  sources: string[]
+  confidence: number
+  evidence: KnowledgeEvidence[]
+}> {
   const { data } = await api.post('/knowledge/test', { question })
   return data
 }

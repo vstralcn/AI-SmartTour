@@ -11,6 +11,11 @@ from app.models.schemas import CreateSessionRequest, CreateSessionResponse
 router = APIRouter()
 
 
+@router.get("/agent/capabilities")
+async def agent_capabilities():
+    return {"mode": "single-orchestrator", "tools": dialogue_engine.agent.capabilities()}
+
+
 @router.post("/sessions", response_model=CreateSessionResponse)
 async def create_session(req: CreateSessionRequest):
     session_id, greeting = dialogue_engine.create_session(req.interests)
@@ -38,7 +43,38 @@ async def chat_stream(websocket: WebSocket):
                 {"type": "emotion", "content": emotion, "done": False}
             )
 
-            async for chunk in dialogue_engine.chat(sid, user_msg):
+            execution = dialogue_engine.prepare(sid, user_msg)
+            for step in execution.steps:
+                await websocket.send_json(
+                    {
+                        "type": "agent_step",
+                        "content": {
+                            "tool": step.tool,
+                            "status": step.status,
+                            "detail": step.detail,
+                        },
+                        "done": False,
+                    }
+                )
+
+            if execution.evidence:
+                await websocket.send_json(
+                    {
+                        "type": "sources",
+                        "content": [
+                            {
+                                "title": item.title,
+                                "category": item.category,
+                                "score": item.score,
+                                "source": item.source,
+                            }
+                            for item in execution.evidence
+                        ],
+                        "done": False,
+                    }
+                )
+
+            async for chunk in dialogue_engine.chat(sid, user_msg, execution):
                 await websocket.send_json(
                     {"type": "text_chunk", "content": chunk, "done": False}
                 )

@@ -1,9 +1,11 @@
 """应用配置"""
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env")
+
     # 应用配置
     app_name: str = "AI-SmartTour"
     debug: bool = False
@@ -26,9 +28,5 @@ class Settings(BaseSettings):
     # ASR/TTS
     asr_model_path: str = "./models/paraformer"
     tts_model_path: str = "./models/cosyvoice"
-
-    class Config:
-        env_file = ".env"
-
 
 settings = Settings()

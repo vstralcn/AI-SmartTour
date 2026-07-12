@@ -2,7 +2,6 @@
 
 from pydantic import BaseModel, Field
 
-
 # ---- Session ----
 
 class CreateSessionRequest(BaseModel):
@@ -24,8 +23,8 @@ class ChatMessageIn(BaseModel):
 
 
 class ChatMessageOut(BaseModel):
-    type: str  # "text_chunk" | "audio_chunk" | "emotion"
-    content: str
+    type: str
+    content: object
     done: bool = False
 
 
@@ -67,9 +66,19 @@ class KnowledgeTestRequest(BaseModel):
     question: str
 
 
+class KnowledgeEvidenceSchema(BaseModel):
+    title: str
+    category: str
+    score: float
+    source: str
+    excerpt: str
+
+
 class KnowledgeTestResponse(BaseModel):
     answer: str
     sources: list[str]
+    confidence: float = 0.0
+    evidence: list[KnowledgeEvidenceSchema] = Field(default_factory=list)
 
 
 # ---- Avatar ----

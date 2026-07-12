@@ -8,6 +8,7 @@ import {
   deleteKnowledgeDoc,
   testKnowledge,
   type KnowledgeDoc,
+  type KnowledgeEvidence,
 } from '../../services/api'
 
 const docs = ref<KnowledgeDoc[]>([])
@@ -15,6 +16,8 @@ const isLoading = ref(false)
 const testQuestion = ref('')
 const testAnswer = ref('')
 const testSources = ref<string[]>([])
+const testConfidence = ref(0)
+const testEvidence = ref<KnowledgeEvidence[]>([])
 const isTesting = ref(false)
 
 const demoDocs: KnowledgeDoc[] = [
@@ -75,16 +78,7 @@ async function handleUpload(file: File) {
     docs.value.push(doc)
     ElMessage.success('上传成功')
   } catch {
-    ElMessage.success('文档已上传（演示模式）')
-    docs.value.push({
-      id: String(Date.now()),
-      title: file.name,
-      category: '待分类',
-      content: '',
-      file_path: `/uploads/${file.name}`,
-      upload_time: new Date().toLocaleString('zh-CN'),
-      status: 'active',
-    })
+    ElMessage.error('上传失败，请检查后端服务')
   }
 }
 
@@ -110,14 +104,16 @@ async function handleTest() {
   isTesting.value = true
   testAnswer.value = ''
   testSources.value = []
+  testConfidence.value = 0
+  testEvidence.value = []
   try {
     const result = await testKnowledge(testQuestion.value)
     testAnswer.value = result.answer
     testSources.value = result.sources
+    testConfidence.value = result.confidence
+    testEvidence.value = result.evidence
   } catch {
-    testAnswer.value =
-      '本景区始建于明代，距今已有600多年历史。景区占地面积约500亩，包含古建筑群、山水园林、文化体验馆等多个景点。开放时间为每日8:00-18:00，门票价格为成人80元/人。'
-    testSources.value = ['景区概况介绍', '常见问题FAQ']
+    testAnswer.value = '测试失败，请检查后端服务后重试。'
   } finally {
     isTesting.value = false
   }
@@ -189,7 +185,12 @@ onMounted(loadDocs)
         </div>
         <div v-if="testAnswer" class="test-result">
           <div class="result-answer">
-            <h4>回答：</h4>
+            <div class="answer-header">
+              <h4>回答：</h4>
+              <el-tag :type="testConfidence >= 0.6 ? 'success' : 'warning'" size="small">
+                置信度 {{ Math.round(testConfidence * 100) }}%
+              </el-tag>
+            </div>
             <p>{{ testAnswer }}</p>
           </div>
           <div class="result-sources" v-if="testSources.length">
@@ -197,6 +198,16 @@ onMounted(loadDocs)
             <el-tag v-for="s in testSources" :key="s" size="small" class="source-tag">
               {{ s }}
             </el-tag>
+          </div>
+          <div class="evidence-list" v-if="testEvidence.length">
+            <h4>证据片段：</h4>
+            <div v-for="item in testEvidence" :key="`${item.source}-${item.title}`" class="evidence-item">
+              <div class="evidence-meta">
+                <strong>{{ item.title }}</strong>
+                <span>{{ Math.round(item.score * 100) }}%</span>
+              </div>
+              <p>{{ item.excerpt }}</p>
+            </div>
           </div>
         </div>
       </div>
@@ -226,6 +237,37 @@ onMounted(loadDocs)
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+.answer-header,
+.evidence-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.evidence-list {
+  margin-top: 16px;
+}
+
+.evidence-item {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.evidence-meta {
+  color: #1d4ed8;
+  font-size: 13px;
+}
+
+.evidence-item p {
+  margin: 6px 0 0;
+  color: #475569;
+  line-height: 1.6;
 }
 
 .docs-section {

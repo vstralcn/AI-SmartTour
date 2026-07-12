@@ -1,61 +1,107 @@
+name: ai-smarttour
+
 services:
-  # 后端API服务
   backend:
-    build: ./backend
+    build:
+      context: ./backend
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/smarttour
-      - REDIS_URL=redis://redis:6379/0
-      - VECTOR_DB_PATH=/app/knowledge_base/vectors
+      DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-smarttour}@postgres:5432/smarttour"
+      REDIS_URL: "redis://redis:6379/0"
+      VECTOR_DB_PATH: "/app/knowledge_base/vectors"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_API_BASE: "${LLM_API_BASE:-https://dashscope.aliyuncs.com/compatible-mode/v1}"
+      LLM_MODEL: "${LLM_MODEL:-qwen-plus}"
+      DIGITAL_HUMAN_URL: "http://digital-human:8001"
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
-      - ./backend/knowledge_base:/app/knowledge_base
+      - knowledge_data:/app/knowledge_base
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    init: true
 
-  # 前端-游客端
   tourist-app:
-    build: ./frontend/tourist-app
+    build:
+      context: ./frontend/tourist-app
     ports:
-      - "3000:80"
+      - "${TOURIST_PORT:-3000}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 
-  # 前端-管理后台
   admin-panel:
-    build: ./frontend/admin-panel
+    build:
+      context: ./frontend/admin-panel
     ports:
-      - "3001:80"
+      - "${ADMIN_PORT:-3001}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 
-  # PostgreSQL
   postgres:
     image: postgres:16-alpine
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_DB: smarttour
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-smarttour}"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d smarttour"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
 
-  # Redis（缓存）
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
 
-  # 数字人推理服务（需要GPU，按需启动）
-  # 启用方式: docker compose --profile gpu up -d
   digital-human:
-    build: ./digital_human
+    build:
+      context: ./digital_human
     ports:
-      - "8001:8001"
+      - "${DIGITAL_HUMAN_PORT:-8001}:8001"
     profiles:
       - gpu
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
     deploy:
       resources:
         reservations:
@@ -66,3 +112,5 @@ services:
 
 volumes:
   pgdata:
+  redisdata:
+  knowledge_data:
