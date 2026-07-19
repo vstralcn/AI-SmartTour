@@ -130,4 +130,22 @@ export function getBroadcastVideoUrl(jobId: string): string {
   return `${API_BASE}/api/v1/digital-human/broadcast/${jobId}/video`
 }
 
+// ---- 讯飞虚拟人 Web SDK ----
+
+export interface XunfeiSignedInfo {
+  enabled: boolean
+  appId?: string
+  sceneId?: string
+  avatarId?: string
+  vcn?: string
+  /** 后端 HMAC-SHA256 签名后的完整 wss 地址，含时效，勿缓存 */
+  signedUrl?: string
+}
+
+/** 拉取讯飞接入参数；未配置时后端返回 enabled=false，前端据此降级回 VRM。 */
+export async function fetchXunfeiSignedInfo(): Promise<XunfeiSignedInfo> {
+  const { data } = await api.get('/avatar/xunfei/signed-url')
+  return data
+}
+
 export default api

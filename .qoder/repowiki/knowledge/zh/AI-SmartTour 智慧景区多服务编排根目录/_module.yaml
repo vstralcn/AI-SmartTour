@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: ""
+title: AI-SmartTour 智慧景区多服务编排根目录
+scope:
+    - README.md
+    - .gitignore
+    - docker-compose.yml
+    - .env.example
+    - image）
+source_files: []
+depends_on: []
+related_to: []

@@ -1,10 +1,20 @@
-"""RAG知识库引擎 - 文档解析 + 向量检索 + 混合检索"""
+"""RAG知识库引擎 - 文档解析 + 关键词检索(jieba 分词 + BM25) + 混合检索"""
 
 import json
+import logging
+import math
 import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+
+try:  # jieba 为纯 Python 中文分词，自带词典、无需模型/联网；缺失时降级到 bigram
+    import jieba
+
+    jieba.setLogLevel(logging.WARNING)
+    _JIEBA = jieba
+except Exception:  # pragma: no cover - 仅在未安装 jieba 时触发
+    _JIEBA = None
 
 
 @dataclass(frozen=True)
@@ -32,13 +42,37 @@ class RetrievalResult:
 class RAGEngine:
     """景区知识库检索引擎
 
-    当前支持 FAQ 精确匹配和轻量关键词排序，并输出结构化证据。
+    当前支持 FAQ 精确匹配与 jieba 分词 + BM25 关键词检索，并输出结构化证据。
     BGE-M3、Reranker 与向量数据库通过 rag 可选依赖预留升级路径。
     """
+
+    # 泛词：单独命中不足以判定 FAQ，需配合更具体的关键词，避免
+    # 例如“我没时间了”误命中“开放时间”FAQ
+    _GENERIC_KEYWORDS = {"时间", "路线", "价格", "怎么", "多少"}
+    # FAQ 命中置信度阈值：低于该值则回退到关键词检索或拒答
+    _FAQ_THRESHOLD = 0.5
+    # BM25 超参：k1 控制词频饱和，b 控制文档长度归一化
+    _BM25_K1 = 1.5
+    _BM25_B = 0.75
+    # 关键词检索最低查询覆盖率：低于该值视为答非所问而拒答，避免
+    # 仅命中“介绍”等高频泛词就回答领域外问题
+    _KEYWORD_MIN_COVERAGE = 0.3
+    # 高频虚词：分词后剔除，避免稀释召回与置信度
+    _STOPWORDS = {
+        "的", "了", "是", "我", "你", "他", "她", "它", "们", "要", "吗", "呢",
+        "啊", "和", "与", "在", "有", "个", "请", "问", "这", "那", "就", "也",
+        "都", "很", "想", "会", "能", "什么", "怎么", "如何",
+    }
 
     def __init__(self):
         self.knowledge_base: list[dict] = []
         self.faq: list[dict] = []
+        # BM25 统计索引，随知识库变更重建
+        self._doc_freqs: list[dict[str, int]] = []
+        self._doc_len: list[int] = []
+        self._df: dict[str, int] = {}
+        self._doc_count = 0
+        self._avgdl = 0.0
         self._load_knowledge()
 
     def _load_knowledge(self):
@@ -66,6 +100,7 @@ class RAGEngine:
             self._normalize_entry(item, "faq", index)
             for index, item in enumerate(self.faq)
         ]
+        self._build_index()
 
     def retrieve(self, query: str, top_k: int = 3) -> str:
         result = self.retrieve_with_sources(query, top_k)
@@ -113,57 +148,158 @@ class RAGEngine:
         )
 
     def _faq_match(self, query: str) -> KnowledgeEvidence | None:
+        best_item: dict | None = None
+        best_score = 0.0
         for item in self.faq:
-            keywords = item.get("keywords", [])
-            if any(kw in query for kw in keywords):
-                return KnowledgeEvidence(
-                    title=item.get("title", "常见问题 FAQ"),
-                    content=item["content"],
-                    category=item.get("category", "FAQ"),
-                    score=1.0,
-                    source=item.get("source", "景区常见问题"),
-                )
-        return None
+            keywords = [kw for kw in item.get("keywords", []) if kw]
+            matched = [kw for kw in keywords if kw in query]
+            if not matched:
+                continue
+            specific = [
+                kw for kw in matched if kw not in self._GENERIC_KEYWORDS]
+            if not specific:
+                # 仅命中泛词：给低分，交由阈值决定是否回退
+                score = 0.35
+            else:
+                longest = max(len(kw) for kw in specific)
+                score = 0.6 + 0.12 * len(specific) + 0.06 * max(longest - 2, 0)
+            score = min(score, 1.0)
+            if score > best_score:
+                best_score = score
+                best_item = item
+
+        if best_item is None or best_score < self._FAQ_THRESHOLD:
+            return None
+        return KnowledgeEvidence(
+            title=best_item.get("title", "常见问题 FAQ"),
+            content=best_item["content"],
+            category=best_item.get("category", "FAQ"),
+            score=round(best_score, 3),
+            source=best_item.get("source", "景区常见问题"),
+        )
 
     def _keyword_search(self, query: str, top_k: int = 3) -> list[KnowledgeEvidence]:
-        scored: list[KnowledgeEvidence] = []
+        if not self.knowledge_base:
+            return []
+        query_terms = set(self._tokenize(query))
+        if not query_terms:
+            return []
+
         normalized_query = self._normalize(query)
-        query_bigrams = self._bigrams(normalized_query)
+        total_idf = sum(self._idf(term) for term in query_terms) or 1.0
+        avgdl = self._avgdl or 1.0
 
-        for doc in self.knowledge_base:
-            content = doc.get("content", "")
-            title = doc.get("title", "")
-            category = doc.get("category", "景区知识")
-            tags = doc.get("tags", [])
-            normalized_doc = self._normalize(" ".join([title, content, category, *tags]))
-            doc_bigrams = self._bigrams(normalized_doc)
-
-            normalized_title = self._normalize(title)
-            normalized_category = self._normalize(category)
-            title_hit = 0.45 if normalized_title and normalized_title in normalized_query else 0.0
-            category_hit = (
-                0.15
-                if normalized_category and normalized_category in normalized_query
-                else 0.0
-            )
-            tag_hits = sum(1 for tag in tags if self._normalize(tag) in normalized_query)
-            tag_score = min(tag_hits * 0.2, 0.4)
-            overlap = len(query_bigrams & doc_bigrams) / max(len(query_bigrams), 1)
-            score = min(title_hit + category_hit + tag_score + overlap * 0.6, 1.0)
-
-            if score >= 0.12:
-                scored.append(
-                    KnowledgeEvidence(
-                        title=title,
-                        content=content,
-                        category=category,
-                        score=round(score, 3),
-                        source=doc.get("source", title),
-                    )
+        raw: list[tuple[int, float, float, float]] = []
+        for idx, doc in enumerate(self.knowledge_base):
+            freqs = self._doc_freqs[idx]
+            doc_len = self._doc_len[idx]
+            bm25 = 0.0
+            matched_idf = 0.0
+            for term in query_terms:
+                freq = freqs.get(term, 0)
+                if freq == 0:
+                    continue
+                idf = self._idf(term)
+                denom = freq + self._BM25_K1 * (
+                    1 - self._BM25_B + self._BM25_B * doc_len / avgdl
                 )
+                bm25 += idf * (freq * (self._BM25_K1 + 1)) / denom
+                matched_idf += idf
+            coverage = matched_idf / total_idf
+
+            # 字段加权：标题命中、标签命中比纯正文命中更可信
+            boost = 0.0
+            norm_title = self._normalize(doc.get("title", ""))
+            if norm_title and norm_title in normalized_query:
+                boost += 0.15
+            if any(
+                self._normalize(tag) and self._normalize(
+                    tag) in normalized_query
+                for tag in doc.get("tags", [])
+            ):
+                boost += 0.1
+            raw.append((idx, bm25, coverage, boost))
+
+        max_bm25 = max((item[1] for item in raw), default=0.0)
+        scored: list[KnowledgeEvidence] = []
+        for idx, bm25, coverage, boost in raw:
+            # 查询覆盖率不足：主要命中的是泛词，视为不相关，拒答
+            if coverage < self._KEYWORD_MIN_COVERAGE:
+                continue
+            if bm25 <= 0.0 and boost <= 0.0:
+                continue
+            bm25_norm = bm25 / max_bm25 if max_bm25 > 0 else 0.0
+            # 覆盖率为主、BM25 为辅校准置信度到 [0,1]，BM25 同时决定排序
+            score = min(0.6 * coverage + 0.4 * bm25_norm + boost, 1.0)
+            if score < 0.12:
+                continue
+            doc = self.knowledge_base[idx]
+            scored.append(
+                KnowledgeEvidence(
+                    title=doc.get("title", ""),
+                    content=doc.get("content", ""),
+                    category=doc.get("category", "景区知识"),
+                    score=round(score, 3),
+                    source=doc.get("source", doc.get("title", "")),
+                )
+            )
 
         scored.sort(key=lambda item: item.score, reverse=True)
         return scored[:top_k]
+
+    def _build_index(self) -> None:
+        """构建 BM25 统计索引：文档词频、文档频率(df)、平均长度。
+
+        知识库内容变更后需重新调用，保持检索与最新数据一致。
+        """
+        self._doc_freqs = []
+        self._doc_len = []
+        df: dict[str, int] = {}
+        total_len = 0
+        for doc in self.knowledge_base:
+            tokens = self._tokenize(self._doc_text(doc))
+            freqs: dict[str, int] = {}
+            for token in tokens:
+                freqs[token] = freqs.get(token, 0) + 1
+            self._doc_freqs.append(freqs)
+            self._doc_len.append(len(tokens))
+            total_len += len(tokens)
+            for token in freqs:
+                df[token] = df.get(token, 0) + 1
+        self._df = df
+        self._doc_count = len(self.knowledge_base)
+        self._avgdl = total_len / self._doc_count if self._doc_count else 0.0
+
+    def _idf(self, term: str) -> float:
+        if self._doc_count <= 0:
+            return 0.0
+        df = self._df.get(term, 0)
+        # df=0（未登录词）仍给出高 idf：作为“未被覆盖”信号计入置信度分母，
+        # 使以生僻/领域外词为主的查询自然降为低覆盖率而被拒答
+        return math.log(1 + (self._doc_count - df + 0.5) / (df + 0.5))
+
+    def _tokenize(self, text: str) -> list[str]:
+        """中文分词：优先 jieba 搜索引擎模式，缺失时降级到字符 bigram。"""
+        cleaned = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]+",
+                         " ", text).lower().strip()
+        if not cleaned:
+            return []
+        if _JIEBA is not None:
+            tokens = [tok.strip() for tok in _JIEBA.cut_for_search(cleaned)]
+        else:
+            tokens = list(self._bigrams(self._normalize(text)))
+        return [tok for tok in tokens if tok and tok not in self._STOPWORDS]
+
+    @staticmethod
+    def _doc_text(doc: dict) -> str:
+        return " ".join(
+            [
+                doc.get("title", ""),
+                doc.get("content", ""),
+                doc.get("category", ""),
+                *doc.get("tags", []),
+            ]
+        )
 
     @staticmethod
     def _normalize(text: str) -> str:
@@ -173,7 +309,7 @@ class RAGEngine:
     def _bigrams(text: str) -> set[str]:
         if len(text) < 2:
             return {text} if text else set()
-        return {text[index : index + 2] for index in range(len(text) - 1)}
+        return {text[index: index + 2] for index in range(len(text) - 1)}
 
     def add_document(self, title: str, content: str, category: str, tags: list[str]):
         entry_id = str(uuid.uuid4())
@@ -194,7 +330,8 @@ class RAGEngine:
 
     def replace_entries(self, entries: list[dict]) -> None:
         active_entries = [
-            self._normalize_entry(entry, str(entry.get("kind", "document")), index)
+            self._normalize_entry(entry, str(
+                entry.get("kind", "document")), index)
             for index, entry in enumerate(entries)
             if entry.get("status", "active") == "active"
         ]
@@ -202,6 +339,7 @@ class RAGEngine:
             entry for entry in active_entries if entry["kind"] != "faq"
         ]
         self.faq = [entry for entry in active_entries if entry["kind"] == "faq"]
+        self._build_index()
 
     def upsert_entry(self, entry: dict) -> None:
         normalized = self._normalize_entry(
@@ -213,13 +351,14 @@ class RAGEngine:
         target[:] = [item for item in target if item["id"] != normalized["id"]]
         if normalized["status"] == "active":
             target.append(normalized)
+        self._build_index()
 
     def delete_entry(self, entry_id: str) -> None:
         self.knowledge_base = [
             item for item in self.knowledge_base if item["id"] != entry_id
         ]
         self.faq = [item for item in self.faq if item["id"] != entry_id]
-        self.faq = [item for item in self.faq if item["id"] != entry_id]
+        self._build_index()
 
     def export_entries(self) -> list[dict]:
         return [dict(entry) for entry in [*self.knowledge_base, *self.faq]]
@@ -227,8 +366,10 @@ class RAGEngine:
     @staticmethod
     def _normalize_entry(item: dict, kind: str, index: int) -> dict:
         content = str(item.get("content") or item.get("answer") or "")
-        title = str(item.get("title") or ("常见问题 FAQ" if kind == "faq" else "景区知识"))
-        category = str(item.get("category") or ("FAQ" if kind == "faq" else "景区知识"))
+        title = str(item.get("title") or (
+            "常见问题 FAQ" if kind == "faq" else "景区知识"))
+        category = str(item.get("category") or (
+            "FAQ" if kind == "faq" else "景区知识"))
         return {
             "id": str(item.get("id") or f"default-{kind}-{index + 1}"),
             "title": title,

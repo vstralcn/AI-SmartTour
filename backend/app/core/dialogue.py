@@ -1,5 +1,6 @@
 """对话引擎 - LLM对话生成 + 上下文管理"""
 
+import logging
 import uuid
 from collections import defaultdict
 from typing import AsyncGenerator
@@ -7,6 +8,9 @@ from typing import AsyncGenerator
 from app.config import settings
 from app.core.agent import AgentExecution, GuideAgent
 from app.core.rag import rag_engine
+from app.services.llm import chat_completion_stream
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """你是智慧景区的AI数字人导游“{guide_name}”。
 角色性格：{guide_personality}
@@ -56,7 +60,8 @@ class DialogueEngine:
             speaking_style,
         )
         greeting = self._generate_greeting(interests or [], guide_name)
-        self.sessions[session_id].append({"role": "assistant", "content": greeting})
+        self.sessions[session_id].append(
+            {"role": "assistant", "content": greeting})
         return session_id, greeting
 
     def _generate_greeting(self, interests: list[str], guide_name: str) -> str:
@@ -83,7 +88,8 @@ class DialogueEngine:
         user_message: str,
         execution: AgentExecution,
     ) -> AsyncGenerator[str, None]:
-        self.sessions[session_id].append({"role": "user", "content": user_message})
+        self.sessions[session_id].append(
+            {"role": "user", "content": user_message})
 
         if execution.direct_response:
             yield execution.direct_response
@@ -132,25 +138,20 @@ class DialogueEngine:
         messages: list[dict],
         fallback_text: str,
     ) -> AsyncGenerator[str, None]:
-        try:
-            import openai
+        """流式调用 LLM；失败或超时时降级到基于证据的答案。
 
-            client = openai.AsyncOpenAI(
-                api_key=settings.llm_api_key,
-                base_url=settings.llm_api_base,
-            )
-            stream = await client.chat.completions.create(
-                model=settings.llm_model,
-                messages=messages,
-                stream=True,
-                temperature=0.7,
-                max_tokens=1024,
-            )
-            async for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+        仅在尚未产出任何内容时才回退 fallback_text，
+        避免流中途出错导致"部分回答 + 完整降级"的拼接乱码。
+        """
+        emitted = False
+        try:
+            async for chunk in chat_completion_stream(messages):
+                emitted = True
+                yield chunk
         except Exception:
-            yield fallback_text
+            logger.warning("LLM 流式调用失败，降级为证据答案", exc_info=True)
+            if not emitted:
+                yield fallback_text
 
 
 dialogue_engine = DialogueEngine()

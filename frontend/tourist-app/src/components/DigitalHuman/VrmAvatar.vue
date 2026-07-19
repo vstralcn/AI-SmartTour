@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm'
 import type { VRM } from '@pixiv/three-vrm'
 
@@ -33,6 +34,7 @@ let clock: THREE.Clock | null = null
 let rafId = 0
 let resizeObserver: ResizeObserver | null = null
 let lookTarget: THREE.Object3D | null = null
+let envTexture: THREE.Texture | null = null
 let destroyed = false
 
 /** 表情通道 -> VRM 1.0 / 0.x 候选名（按序解析） */
@@ -307,20 +309,35 @@ onMounted(() => {
     return
   }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  // 正确的色彩管理 + PBR Neutral 色调映射（保留饱和度，避免卡通材质发灰）
+  renderer.outputColorSpace = THREE.SRGBColorSpace
+  renderer.toneMapping = THREE.NeutralToneMapping
+  renderer.toneMappingExposure = 1.05
   container.value.appendChild(renderer.domElement)
 
   scene = new THREE.Scene()
   camera = new THREE.PerspectiveCamera(38, 1, 0.1, 20)
   camera.position.set(0, 1.2, 1.5)
 
-  const hemisphere = new THREE.HemisphereLight(0xffffff, 0x3a3a55, 1.25)
-  scene.add(hemisphere)
-  const keyLight = new THREE.DirectionalLight(0xffffff, 1.6)
-  keyLight.position.set(0.6, 1.6, 1.4)
+  // 轻量环境光照（IBL）：为配件等 PBR 部件提供自然反射，MToon 卡通材质会忽略
+  const pmrem = new THREE.PMREMGenerator(renderer)
+  envTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+  scene.environment = envTexture
+  scene.environmentIntensity = 0.35
+  pmrem.dispose()
+
+  // 三点布光：主光 + 补光 + 轮廓光，营造演播室级立体感
+  const ambient = new THREE.HemisphereLight(0xffffff, 0x2a2a3a, 0.9)
+  scene.add(ambient)
+  const keyLight = new THREE.DirectionalLight(0xfff4e6, 2.2) // 暖色主光（右上前方）
+  keyLight.position.set(1.2, 1.8, 1.6)
   scene.add(keyLight)
-  const fillLight = new THREE.DirectionalLight(0x8899ff, 0.5)
-  fillLight.position.set(-1.2, 0.8, 0.6)
+  const fillLight = new THREE.DirectionalLight(0xdfe8ff, 0.7) // 冷色补光（左前方，柔化阴影）
+  fillLight.position.set(-1.6, 0.6, 1.0)
   scene.add(fillLight)
+  const rimLight = new THREE.DirectionalLight(0xffffff, 1.8) // 轮廓光（后上方，勾勒发丝与肩线）
+  rimLight.position.set(-0.4, 2.0, -1.8)
+  scene.add(rimLight)
 
   lookTarget = new THREE.Object3D()
   scene.add(lookTarget)
@@ -349,6 +366,8 @@ onUnmounted(() => {
   }
   renderer?.dispose()
   renderer?.domElement.remove()
+  envTexture?.dispose()
+  envTexture = null
   renderer = null
   scene = null
   camera = null

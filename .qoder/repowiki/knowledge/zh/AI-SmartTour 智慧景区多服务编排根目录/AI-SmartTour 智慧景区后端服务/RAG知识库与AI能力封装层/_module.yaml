@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: backend/shared_core
+title: RAG知识库与AI能力封装层
+scope:
+    - backend/app/core/rag.py
+    - backend/app/services/llm.py
+    - backend/app/services/asr.py
+    - backend/app/services/tts.py
+source_files: []
+depends_on: []
+related_to:
+    - path: backend/chat_domain

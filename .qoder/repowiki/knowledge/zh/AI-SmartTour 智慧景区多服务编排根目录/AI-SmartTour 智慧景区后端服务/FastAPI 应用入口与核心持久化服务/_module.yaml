@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: backend/app_infra
+title: FastAPI 应用入口与核心持久化服务
+scope:
+    - backend/app/main.py
+    - backend/app/config.py
+    - backend/app/services/persistence.py
+source_files: []
+depends_on: []
+related_to:
+    - path: backend/analytics_domain
+    - path: backend/chat_domain

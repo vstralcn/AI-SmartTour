@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 # ---- Session ----
 
+
 class CreateSessionRequest(BaseModel):
     visitor_id: str | None = None
     interests: list[str] = Field(default_factory=list)
@@ -128,6 +129,16 @@ class AvatarConfigSchema(BaseModel):
     clothing: str = "现代导游服"
     speaking_style: str = "亲切自然"
     is_active: bool = False
+
+
+# ---- TTS ----
+
+class TTSRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    voice_id: str = "female-1"
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    pitch: float = Field(default=1.0, ge=0.5, le=2.0)
+    emotion: str = "neutral"
 
 
 # ---- Analytics ----

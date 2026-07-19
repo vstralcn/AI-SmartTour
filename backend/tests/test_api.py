@@ -3,6 +3,7 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
 
 
@@ -145,6 +146,50 @@ class APITest(unittest.TestCase):
                 f"/api/v1/admin/avatar/{original_avatar['id']}/activate"
             )
             self.client.delete(f"/api/v1/admin/avatar/{avatar_id}")
+
+    def test_xunfei_signed_url_disabled_when_unconfigured(self) -> None:
+        response = self.client.get("/api/v1/avatar/xunfei/signed-url")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"enabled": False})
+
+    def test_xunfei_signed_url_signs_without_leaking_secret(self) -> None:
+        overrides = {
+            "xf_avatar_app_id": "app-123",
+            "xf_avatar_api_key": "key-abc",
+            "xf_avatar_api_secret": "secret-xyz",
+            "xf_avatar_scene_id": "scene-9",
+            "xf_avatar_avatar_id": "avatar-7",
+            "xf_avatar_vcn": "x4_yezi",
+        }
+        originals = {key: getattr(settings, key) for key in overrides}
+        for key, value in overrides.items():
+            setattr(settings, key, value)
+        try:
+            payload = self.client.get(
+                "/api/v1/avatar/xunfei/signed-url"
+            ).json()
+        finally:
+            for key, value in originals.items():
+                setattr(settings, key, value)
+
+        self.assertTrue(payload["enabled"])
+        self.assertEqual(payload["appId"], "app-123")
+        self.assertEqual(payload["sceneId"], "scene-9")
+        self.assertEqual(payload["avatarId"], "avatar-7")
+        self.assertEqual(payload["vcn"], "x4_yezi")
+        self.assertTrue(
+            payload["signedUrl"].startswith(
+                "wss://avatar.cn-huadong-1.xf-yun.com/v1/interact?authorization="
+            )
+        )
+        self.assertIn("date=", payload["signedUrl"])
+        self.assertIn("host=", payload["signedUrl"])
+        # 密钥绝不能出现在下发给前端的响应里
+        serialized = str(payload)
+        self.assertNotIn("secret-xyz", serialized)
+        self.assertNotIn("key-abc", serialized)
+        self.assertNotIn("apiSecret", payload)
+        self.assertNotIn("apiKey", payload)
 
 
 if __name__ == "__main__":

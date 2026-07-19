@@ -16,7 +16,7 @@ import {
   type AvatarConfig,
   type BroadcastJob,
 } from '../services/api'
-import { cancelSpeech, speakText } from '../services/speech'
+import { cancelSpeech, speak } from '../services/speech'
 import DigitalHuman from '../components/DigitalHuman/DigitalHuman.vue'
 import ChatPanel from '../components/ChatPanel/ChatPanel.vue'
 import VoiceInput from '../components/VoiceInput/VoiceInput.vue'
@@ -26,9 +26,12 @@ const chatStore = useChatStore()
 const isSpeaking = ref(false)
 const isThinking = ref(false)
 const voiceEnabled = ref(true)
-/** 数字人呈现模式：live=3D实时互动，hd=高清播报视频 */
-const displayMode = ref<'live' | 'hd'>('live')
+/** 数字人呈现模式：live=3D实时互动，hd=高清播报视频，xunfei=讯飞虚拟人 */
+const displayMode = ref<'live' | 'hd' | 'xunfei'>('live')
 const speechPulse = ref(0)
+/** 讯飞待播报文本与驱动序号 */
+const xunfeiText = ref('')
+const xunfeiSeq = ref(0)
 const hdVideoUrl = ref('')
 const hdVideoMuted = ref(true)
 const hdGenerating = ref(false)
@@ -155,9 +158,10 @@ function speakResponse(text: string) {
     isSpeaking.value = false
     return
   }
-  const started = speakText(
+  void speak(
     text,
     activeAvatar.value.voice_config,
+    chatStore.currentEmotion,
     {
       onStart: () => {
         isSpeaking.value = true
@@ -169,13 +173,14 @@ function speakResponse(text: string) {
         speechPulse.value++
       },
     }
-  )
-  if (!started) {
-    isSpeaking.value = false
-  }
+  ).then((started) => {
+    if (!started) {
+      isSpeaking.value = false
+    }
+  })
 }
 
-/** 回复投递：按当前呈现模式选择实时语音或高清播报 */
+/** 回复投递：按当前呈现模式选择实时语音、高清播报或讯飞驱动 */
 function deliverResponse(text: string) {
   if (!voiceEnabled.value) {
     isSpeaking.value = false
@@ -185,7 +190,41 @@ function deliverResponse(text: string) {
     void startHdBroadcast(text)
     return
   }
+  if (displayMode.value === 'xunfei') {
+    driveXunfei(text)
+    return
+  }
   speakResponse(text)
+}
+
+/** 讯飞文本驱动：由讯飞形象自行发声，不走浏览器 TTS */
+function driveXunfei(text: string) {
+  cancelSpeech()
+  xunfeiText.value = text
+  xunfeiSeq.value++
+}
+
+function lastAssistantText(): string {
+  for (let i = chatStore.messages.length - 1; i >= 0; i--) {
+    if (chatStore.messages[i].role === 'assistant') {
+      return chatStore.messages[i].content
+    }
+  }
+  return ''
+}
+
+/** 讯飞不可用（未配置/启动失败）：回退实时模式并用浏览器 TTS 补播 */
+function onXunfeiError(reason: string) {
+  console.warn('讯飞数字人不可用，已切换实时模式:', reason)
+  hdError.value = '讯飞数字人暂不可用，已切换实时模式'
+  displayMode.value = 'live'
+  const text = lastAssistantText()
+  if (text) speakResponse(text)
+}
+
+/** 讯飞播报状态同步到 UI */
+function onXunfeiSpeaking(value: boolean) {
+  isSpeaking.value = value
 }
 
 /** 高清播报：请求后端生成数字人视频，成功后切换视频播放 */
@@ -241,7 +280,7 @@ async function pollBroadcast(jobId: string, seq: number): Promise<BroadcastJob> 
   return { job_id: jobId, status: 'failed', message: '生成超时' }
 }
 
-function setDisplayMode(mode: 'live' | 'hd') {
+function setDisplayMode(mode: 'live' | 'hd' | 'xunfei') {
   if (displayMode.value === mode) return
   displayMode.value = mode
   hdSeq++
@@ -250,6 +289,11 @@ function setDisplayMode(mode: 'live' | 'hd') {
   hdGenerating.value = false
   cancelSpeech()
   isSpeaking.value = false
+  // 进入讯飞模式时，把最近一条回复交给讯飞形象播报（未就绪先缓存）
+  if (mode === 'xunfei') {
+    const text = lastAssistantText()
+    if (text) driveXunfei(text)
+  }
 }
 
 function onVideoEnded() {
@@ -314,40 +358,77 @@ function goBack() {
 
 <template>
   <div class="chat-view">
+    <!-- 顶部栏：玻璃感 -->
     <header class="chat-header">
-      <button class="back-btn" @click="goBack">&larr;</button>
-      <h1>AI智能导游</h1>
+      <button class="icon-btn back-btn" @click="goBack" title="返回">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="19" y1="12" x2="5" y2="12" />
+          <polyline points="12 19 5 12 12 5" />
+        </svg>
+      </button>
+
+      <div class="title-block">
+        <h1>AI 智能导游</h1>
+        <div class="status-line">
+          <span class="conn-dot" :class="{ on: ws?.readyState === 1 }" />
+          <span class="status-text">
+            {{ ws?.readyState === 1 ? '已连接' : '连接中…' }}
+          </span>
+        </div>
+      </div>
+
       <div class="header-actions">
+        <!-- 呈现模式切换 -->
+        <div class="seg-group" role="tablist">
+          <button
+            v-for="m in [
+              { key: 'live', label: '实时' },
+              { key: 'hd', label: '高清' },
+              { key: 'xunfei', label: '讯飞' },
+            ]"
+            :key="m.key"
+            class="seg-btn"
+            :class="{ active: displayMode === m.key }"
+            @click="setDisplayMode(m.key as 'live' | 'hd' | 'xunfei')"
+          >
+            {{ m.label }}
+          </button>
+        </div>
+
         <button
-          class="mode-btn"
-          :class="{ active: displayMode === 'live' }"
-          @click="setDisplayMode('live')"
-          title="3D 实时数字人互动"
+          class="icon-btn voice-toggle"
+          :class="{ off: !voiceEnabled }"
+          @click="toggleVoice"
+          :title="voiceEnabled ? '关闭语音' : '开启语音'"
         >
-          实时
+          <svg v-if="voiceEnabled" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
+          </svg>
+          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+            <line x1="23" y1="9" x2="17" y2="15" />
+            <line x1="17" y1="9" x2="23" y2="15" />
+          </svg>
         </button>
-        <button
-          class="mode-btn"
-          :class="{ active: displayMode === 'hd' }"
-          @click="setDisplayMode('hd')"
-          title="高清播报视频"
-        >
-          高清
-        </button>
-        <button class="voice-toggle" @click="toggleVoice">
-          {{ voiceEnabled ? '语音开' : '语音关' }}
-        </button>
-        <button class="route-btn" @click="router.push('/route-plan')">
-          路线
+
+        <button class="icon-btn route-btn" @click="router.push('/route-plan')" title="路线规划">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="3 11 22 2 13 21 11 13 3 11" />
+          </svg>
         </button>
       </div>
     </header>
 
     <div class="chat-body">
-      <div class="digital-human-section">
-        <div class="display-toolbar" v-if="hdError">
-          <span class="hd-error">{{ hdError }}</span>
-        </div>
+      <!-- 数字人区：毛玻璃卡 -->
+      <aside class="digital-section">
+        <transition name="slide-down">
+          <div v-if="hdError" class="hd-banner">
+            <span class="banner-dot" />
+            <span class="banner-text">{{ hdError }}</span>
+          </div>
+        </transition>
         <DigitalHuman
           :emotion="chatStore.currentEmotion"
           :is-speaking="isSpeaking"
@@ -360,16 +441,22 @@ function goBack() {
           :video-muted="hdVideoMuted"
           :model-url="'/models/guide.vrm'"
           :speech-pulse="speechPulse"
+          :enable-xunfei="displayMode === 'xunfei'"
+          :xunfei-text="xunfeiText"
+          :xunfei-seq="xunfeiSeq"
           @video-ended="onVideoEnded"
+          @xunfei-error="onXunfeiError"
+          @xunfei-speaking="onXunfeiSpeaking"
         />
-      </div>
+      </aside>
 
-      <div class="chat-section">
+      <!-- 聊天区 -->
+      <section class="chat-section">
         <ChatPanel @send="handleSendMessage" />
         <div class="voice-section">
           <VoiceInput @transcript="handleSendMessage" />
         </div>
-      </div>
+      </section>
     </div>
   </div>
 </template>
@@ -379,98 +466,181 @@ function goBack() {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #f0f2f5;
+  background: var(--color-bg);
+  overflow: hidden;
 }
 
+/* ============== 顶栏 ============== */
 .chat-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: white;
-  border-bottom: 1px solid #e5e7eb;
+  gap: var(--sp-3);
+  padding: 12px var(--sp-5);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--color-border-2);
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-right: auto;
 }
 
 .chat-header h1 {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--color-text);
+  letter-spacing: -0.2px;
 }
 
-.back-btn {
-  background: none;
-  border: none;
-  font-size: 20px;
-  cursor: pointer;
-  padding: 4px 8px;
-  color: #4f46e5;
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--color-text-3);
 }
 
-.route-btn {
-  background: #eef2ff;
-  color: #4f46e5;
-  border: none;
-  border-radius: 8px;
-  padding: 6px 12px;
-  font-size: 13px;
-  cursor: pointer;
-  font-weight: 500;
+.conn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-4);
+  transition: all var(--t-normal) var(--ease-out);
+}
+.conn-dot.on {
+  background: var(--color-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 20%, transparent);
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
-.voice-toggle {
-  border: none;
-  border-radius: 8px;
-  background: #ecfdf5;
-  color: #047857;
-  padding: 6px 10px;
+/* 圆角图标按钮 */
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface-2);
+  color: var(--color-text-2);
+  border-radius: var(--r-md);
+  transition: all var(--t-fast) var(--ease-out);
+}
+.icon-btn:hover {
+  background: var(--brand-50);
+  color: var(--brand-600);
+  transform: translateY(-1px);
+}
+
+.back-btn {
+  background: transparent;
+  color: var(--brand-600);
+}
+.back-btn:hover {
+  background: var(--brand-50);
+}
+
+.route-btn {
+  background: var(--brand-50);
+  color: var(--brand-600);
+}
+.route-btn:hover {
+  background: var(--brand-100);
+}
+
+.voice-toggle.off {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.voice-toggle.off:hover {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+/* 分段控件（模式切换） */
+.seg-group {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--color-surface-2);
+  border-radius: var(--r-pill);
+  gap: 2px;
+}
+
+.seg-btn {
+  padding: 5px 14px;
   font-size: 12px;
-  cursor: pointer;
+  font-weight: 500;
+  color: var(--color-text-3);
+  border-radius: var(--r-pill);
+  transition: all var(--t-fast) var(--ease-out);
+}
+.seg-btn:hover {
+  color: var(--color-text);
+}
+.seg-btn.active {
+  background: var(--color-surface);
+  color: var(--brand-600);
+  font-weight: 600;
+  box-shadow: var(--shadow-xs);
 }
 
-.mode-btn {
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  background: white;
-  color: #6b7280;
-  padding: 5px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.mode-btn.active {
-  background: #4f46e5;
-  color: white;
-  border-color: #4f46e5;
-}
-
-.hd-error {
-  display: inline-block;
-  margin-bottom: 6px;
-  padding: 4px 12px;
-  border-radius: 6px;
-  background: rgba(239, 68, 68, 0.12);
-  color: #ef4444;
-  font-size: 11px;
-}
-
+/* ============== 主体 ============== */
 .chat-body {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
-.digital-human-section {
-  height: 380px;
-  padding: 12px;
+.digital-section {
+  position: relative;
+  height: 360px;
+  padding: var(--sp-4);
   flex-shrink: 0;
+}
+
+.hd-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--color-warning-soft);
+  color: #92400e;
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  z-index: 5;
+  box-shadow: var(--shadow-sm);
+}
+.banner-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-warning);
+}
+
+.slide-down-enter-active,
+.slide-down-leave-active {
+  transition: all var(--t-normal) var(--ease-out);
+}
+.slide-down-enter-from,
+.slide-down-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -8px);
 }
 
 .chat-section {
@@ -478,28 +648,36 @@ function goBack() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--color-surface);
+  border-radius: var(--r-2xl) var(--r-2xl) 0 0;
+  box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.04);
+  min-height: 0;
 }
 
 .voice-section {
   display: flex;
   justify-content: center;
-  padding: 8px;
-  background: white;
-  border-top: 1px solid #e5e7eb;
+  align-items: center;
+  padding: 10px var(--sp-4);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border-2);
 }
 
+/* ============== 响应式（桌面） ============== */
 @media (min-width: 768px) {
   .chat-body {
     flex-direction: row;
+    padding: var(--sp-4);
+    gap: var(--sp-4);
   }
-
-  .digital-human-section {
+  .digital-section {
     width: 45%;
     height: auto;
+    padding: 0;
   }
-
   .chat-section {
     width: 55%;
+    border-radius: var(--r-2xl);
   }
 }
 </style>

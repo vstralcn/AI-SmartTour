@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: backend/analytics_domain
+title: 运营数据分析与情感分析服务
+scope:
+    - backend/app/api/analytics.py
+    - backend/app/services/analytics.py
+    - backend/app/core/sentiment.py
+source_files: []
+depends_on: []
+related_to:
+    - path: backend/app_infra

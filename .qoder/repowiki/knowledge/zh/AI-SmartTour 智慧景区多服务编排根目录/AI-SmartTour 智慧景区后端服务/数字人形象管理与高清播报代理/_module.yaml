@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: backend/avatar_digital_human
+title: 数字人形象管理与高清播报代理
+scope:
+    - backend/app/api/avatar.py
+    - backend/app/api/digital_human_broadcast.py
+    - backend/app/services/digital_human.py
+source_files: []
+depends_on: []
+related_to:
+    - path: digital_human_service

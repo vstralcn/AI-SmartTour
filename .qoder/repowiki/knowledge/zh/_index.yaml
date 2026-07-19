@@ -1,0 +1,119 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: devin/1782809602-project-design
+nodes_managed: true
+exported_at: "2026-07-19T12:38:35Z"
+modules:
+    "":
+        dir_name: AI-SmartTour 智慧景区多服务编排根目录
+        title: AI-SmartTour 智慧景区多服务编排根目录
+        scope:
+            - README.md
+            - .gitignore
+            - docker-compose.yml
+            - .env.example
+            - image）
+        source_files: []
+        children:
+            - backend
+            - digital_human_service
+            - docs
+        depends_on: []
+        related_to: []
+    backend:
+        dir_name: AI-SmartTour 智慧景区后端服务
+        title: AI-SmartTour 智慧景区后端服务
+        scope:
+            - backend/
+        source_files: []
+        children:
+            - backend/analytics_domain
+            - backend/app_infra
+            - backend/avatar_digital_human
+            - backend/chat_domain
+            - backend/shared_core
+        depends_on: []
+        related_to: []
+    backend/analytics_domain:
+        dir_name: 运营数据分析与情感分析服务
+        title: 运营数据分析与情感分析服务
+        scope:
+            - backend/app/api/analytics.py
+            - backend/app/services/analytics.py
+            - backend/app/core/sentiment.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: backend/app_infra
+    backend/app_infra:
+        dir_name: FastAPI 应用入口与核心持久化服务
+        title: FastAPI 应用入口与核心持久化服务
+        scope:
+            - backend/app/main.py
+            - backend/app/config.py
+            - backend/app/services/persistence.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: backend/analytics_domain
+            - path: backend/chat_domain
+    backend/avatar_digital_human:
+        dir_name: 数字人形象管理与高清播报代理
+        title: 数字人形象管理与高清播报代理
+        scope:
+            - backend/app/api/avatar.py
+            - backend/app/api/digital_human_broadcast.py
+            - backend/app/services/digital_human.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: digital_human_service
+    backend/chat_domain:
+        dir_name: 智慧景区对话服务（Agent + 对话引擎 + WebSocket API）
+        title: 智慧景区对话服务（Agent + 对话引擎 + WebSocket API）
+        scope:
+            - backend/app/api/chat.py
+            - backend/app/core/agent.py
+            - backend/app/core/dialogue.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: backend/app_infra
+            - path: backend/shared_core
+    backend/shared_core:
+        dir_name: RAG知识库与AI能力封装层
+        title: RAG知识库与AI能力封装层
+        scope:
+            - backend/app/core/rag.py
+            - backend/app/services/llm.py
+            - backend/app/services/asr.py
+            - backend/app/services/tts.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: backend/chat_domain
+    digital_human_service:
+        dir_name: 数字人视频生成推理服务
+        title: 数字人视频生成推理服务
+        scope:
+            - digital_human/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: backend/avatar_digital_human
+    docs:
+        dir_name: 项目文档与答辩材料
+        title: 项目文档与答辩材料
+        scope:
+            - docs/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []

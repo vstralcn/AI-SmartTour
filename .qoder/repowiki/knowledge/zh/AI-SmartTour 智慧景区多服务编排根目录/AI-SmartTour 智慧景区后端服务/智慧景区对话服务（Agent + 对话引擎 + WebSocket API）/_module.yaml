@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: backend/chat_domain
+title: 智慧景区对话服务（Agent + 对话引擎 + WebSocket API）
+scope:
+    - backend/app/api/chat.py
+    - backend/app/core/agent.py
+    - backend/app/core/dialogue.py
+source_files: []
+depends_on: []
+related_to:
+    - path: backend/app_infra
+    - path: backend/shared_core
