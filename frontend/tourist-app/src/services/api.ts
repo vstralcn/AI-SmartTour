@@ -88,4 +88,46 @@ export function createChatWebSocket(sessionId: string): WebSocket {
   return new WebSocket(`${wsBase}/api/v1/chat/stream?session_id=${sessionId}`)
 }
 
+// ---- 数字人高清播报 ----
+
+export interface BroadcastJob {
+  job_id: string
+  status: 'queued' | 'processing' | 'done' | 'failed'
+  message?: string
+  /** 视频是否自带音轨；模拟引擎生成的视频无音轨，前端需继续用浏览器 TTS 发声 */
+  has_audio?: boolean
+  /** 生成引擎：musetalk（GPU 真人口型同步）或 simulate（ffmpeg 模拟播报） */
+  engine?: string
+}
+
+export async function requestBroadcast(
+  text: string,
+  emotion: string,
+  imageUrl: string
+): Promise<BroadcastJob> {
+  const imageResp = await fetch(imageUrl)
+  if (!imageResp.ok) {
+    throw new Error('数字人形象图片获取失败')
+  }
+  const imageBlob = await imageResp.blob()
+  const form = new FormData()
+  form.append('text', text)
+  form.append('emotion', emotion)
+  form.append('image', imageBlob, 'avatar.png')
+  const { data } = await api.post('/digital-human/broadcast', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  })
+  return data
+}
+
+export async function getBroadcastJob(jobId: string): Promise<BroadcastJob> {
+  const { data } = await api.get(`/digital-human/broadcast/${jobId}`)
+  return data
+}
+
+export function getBroadcastVideoUrl(jobId: string): string {
+  return `${API_BASE}/api/v1/digital-human/broadcast/${jobId}/video`
+}
+
 export default api

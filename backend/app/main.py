@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analytics, avatar, chat, knowledge, recommend
+from app.api import analytics, avatar, chat, digital_human_broadcast, knowledge, recommend
 from app.core.dialogue import dialogue_engine
 from app.db import init_database
 from app.services.persistence import database_is_ready, seed_defaults
@@ -39,6 +39,7 @@ app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库"])
 app.include_router(avatar.router, prefix="/api/v1", tags=["数字人"])
 app.include_router(avatar.public_router, prefix="/api/v1", tags=["数字人"])
 app.include_router(analytics.router, prefix="/api/v1", tags=["数据分析"])
+app.include_router(digital_human_broadcast.router, prefix="/api/v1", tags=["数字人播报"])
 
 
 @app.get("/health")
