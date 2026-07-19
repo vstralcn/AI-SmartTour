@@ -7,6 +7,8 @@ export interface SpeechVoiceConfig {
 interface SpeechCallbacks {
   onStart: () => void
   onEnd: () => void
+  /** 朗读到每个词/字边界时触发，用于驱动数字人口型重读 */
+  onBoundary?: () => void
 }
 
 export function speakText(
@@ -31,6 +33,9 @@ export function speakText(
   utterance.onstart = callbacks.onStart
   utterance.onend = callbacks.onEnd
   utterance.onerror = callbacks.onEnd
+  if (callbacks.onBoundary) {
+    utterance.onboundary = callbacks.onBoundary
+  }
   window.speechSynthesis.speak(utterance)
   return true
 }

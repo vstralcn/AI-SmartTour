@@ -10,7 +10,11 @@ import {
 import {
   createChatWebSocket,
   getActiveAvatar,
+  getBroadcastJob,
+  getBroadcastVideoUrl,
+  requestBroadcast,
   type AvatarConfig,
+  type BroadcastJob,
 } from '../services/api'
 import { cancelSpeech, speakText } from '../services/speech'
 import DigitalHuman from '../components/DigitalHuman/DigitalHuman.vue'
@@ -22,6 +26,15 @@ const chatStore = useChatStore()
 const isSpeaking = ref(false)
 const isThinking = ref(false)
 const voiceEnabled = ref(true)
+/** 数字人呈现模式：live=3D实时互动，hd=高清播报视频 */
+const displayMode = ref<'live' | 'hd'>('live')
+const speechPulse = ref(0)
+const hdVideoUrl = ref('')
+const hdVideoMuted = ref(true)
+const hdGenerating = ref(false)
+const hdError = ref('')
+/** 高清播报请求序号，用于丢弃过期结果 */
+let hdSeq = 0
 const ws = ref<WebSocket | null>(null)
 const activeAvatar = ref<AvatarConfig>({
   id: 'xiaozhi',
@@ -57,11 +70,12 @@ onMounted(async () => {
     (message) => message.role === 'assistant'
   )
   if (greeting) {
-    speakResponse(greeting.content)
+    deliverResponse(greeting.content)
   }
 })
 
 onUnmounted(() => {
+  hdSeq++
   ws.value?.close()
   cancelSpeech()
 })
@@ -117,7 +131,7 @@ function handleServerMessage(data: {
       isThinking.value = false
       const message = chatStore.messages[chatStore.messages.length - 1]
       if (message?.role === 'assistant') {
-        speakResponse(message.content)
+        deliverResponse(message.content)
       }
       return
     }
@@ -151,11 +165,96 @@ function speakResponse(text: string) {
       onEnd: () => {
         isSpeaking.value = false
       },
+      onBoundary: () => {
+        speechPulse.value++
+      },
     }
   )
   if (!started) {
     isSpeaking.value = false
   }
+}
+
+/** 回复投递：按当前呈现模式选择实时语音或高清播报 */
+function deliverResponse(text: string) {
+  if (!voiceEnabled.value) {
+    isSpeaking.value = false
+    return
+  }
+  if (displayMode.value === 'hd') {
+    void startHdBroadcast(text)
+    return
+  }
+  speakResponse(text)
+}
+
+/** 高清播报：请求后端生成数字人视频，成功后切换视频播放 */
+async function startHdBroadcast(text: string) {
+  const seq = ++hdSeq
+  hdGenerating.value = true
+  hdError.value = ''
+  hdVideoUrl.value = ''
+  try {
+    const job = await requestBroadcast(
+      text,
+      chatStore.currentEmotion,
+      activeAvatar.value.appearance.image_url
+    )
+    const result = await pollBroadcast(job.job_id, seq)
+    if (seq !== hdSeq) return
+    if (result.status !== 'done') {
+      throw new Error(result.message || '高清播报生成失败')
+    }
+    hdVideoMuted.value = !result.has_audio
+    hdVideoUrl.value = getBroadcastVideoUrl(job.job_id)
+    if (result.has_audio) {
+      // 视频自带配音，由视频播放驱动说话状态
+      isSpeaking.value = true
+    } else {
+      // 模拟视频无音轨，浏览器 TTS 同步发声
+      speakResponse(text)
+    }
+  } catch (err) {
+    if (seq !== hdSeq) return
+    console.warn('高清播报不可用，降级为实时播报:', err)
+    hdError.value = '高清播报暂不可用，已切换实时播报'
+    speakResponse(text)
+  } finally {
+    if (seq === hdSeq) {
+      hdGenerating.value = false
+    }
+  }
+}
+
+async function pollBroadcast(jobId: string, seq: number): Promise<BroadcastJob> {
+  const deadline = Date.now() + 120_000
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+    if (seq !== hdSeq) {
+      return { job_id: jobId, status: 'failed', message: '已取消' }
+    }
+    const job = await getBroadcastJob(jobId)
+    if (job.status === 'done' || job.status === 'failed') {
+      return job
+    }
+  }
+  return { job_id: jobId, status: 'failed', message: '生成超时' }
+}
+
+function setDisplayMode(mode: 'live' | 'hd') {
+  if (displayMode.value === mode) return
+  displayMode.value = mode
+  hdSeq++
+  hdVideoUrl.value = ''
+  hdError.value = ''
+  hdGenerating.value = false
+  cancelSpeech()
+  isSpeaking.value = false
+}
+
+function onVideoEnded() {
+  hdVideoUrl.value = ''
+  isSpeaking.value = false
 }
 
 function toggleVoice() {
@@ -219,17 +318,36 @@ function goBack() {
       <button class="back-btn" @click="goBack">&larr;</button>
       <h1>AI智能导游</h1>
       <div class="header-actions">
+        <button
+          class="mode-btn"
+          :class="{ active: displayMode === 'live' }"
+          @click="setDisplayMode('live')"
+          title="3D 实时数字人互动"
+        >
+          实时
+        </button>
+        <button
+          class="mode-btn"
+          :class="{ active: displayMode === 'hd' }"
+          @click="setDisplayMode('hd')"
+          title="高清播报视频"
+        >
+          高清
+        </button>
         <button class="voice-toggle" @click="toggleVoice">
-          {{ voiceEnabled ? '语音播报开' : '语音播报关' }}
+          {{ voiceEnabled ? '语音开' : '语音关' }}
         </button>
         <button class="route-btn" @click="router.push('/route-plan')">
-          路线推荐
+          路线
         </button>
       </div>
     </header>
 
     <div class="chat-body">
       <div class="digital-human-section">
+        <div class="display-toolbar" v-if="hdError">
+          <span class="hd-error">{{ hdError }}</span>
+        </div>
         <DigitalHuman
           :emotion="chatStore.currentEmotion"
           :is-speaking="isSpeaking"
@@ -238,6 +356,11 @@ function goBack() {
           :name="activeAvatar.name"
           :style="`${activeAvatar.clothing} · ${activeAvatar.speaking_style}`"
           :introduction="activeAvatar.personality"
+          :video-url="hdVideoUrl"
+          :video-muted="hdVideoMuted"
+          :model-url="'/models/guide.vrm'"
+          :speech-pulse="speechPulse"
+          @video-ended="onVideoEnded"
         />
       </div>
 
@@ -310,6 +433,33 @@ function goBack() {
   cursor: pointer;
 }
 
+.mode-btn {
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: white;
+  color: #6b7280;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mode-btn.active {
+  background: #4f46e5;
+  color: white;
+  border-color: #4f46e5;
+}
+
+.hd-error {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  font-size: 11px;
+}
+
 .chat-body {
   flex: 1;
   display: flex;
@@ -318,7 +468,7 @@ function goBack() {
 }
 
 .digital-human-section {
-  height: 300px;
+  height: 380px;
   padding: 12px;
   flex-shrink: 0;
 }

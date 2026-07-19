@@ -1,5 +1,10 @@
 FROM python:3.11-slim
 
+# ffmpeg：用于数字人播报模拟降级（无 GPU 时）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY . .
