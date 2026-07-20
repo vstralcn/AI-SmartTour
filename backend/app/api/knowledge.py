@@ -5,9 +5,10 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from app.config import settings
+from app.core.auth import require_admin
 from app.core.rag import rag_engine
 from app.db.models import KnowledgeDocumentRecord
 from app.models.schemas import (
@@ -25,7 +26,7 @@ from app.services.persistence import (
     save_knowledge_record,
 )
 
-router = APIRouter(prefix="/admin/knowledge")
+router = APIRouter(prefix="/admin/knowledge", dependencies=[Depends(require_admin)])
 logger = logging.getLogger(__name__)
 
 

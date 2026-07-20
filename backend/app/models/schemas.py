@@ -204,3 +204,17 @@ class SentimentReport(BaseModel):
     trend: list[SentimentTrendPoint]
     top_concerns: list[TopConcern]
     suggestions: list[str]
+
+
+# ---- Admin Auth ----
+
+
+class AdminLoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class AdminLoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: int

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import ImageAvatar from './ImageAvatar.vue'
 import VrmAvatar from './VrmAvatar.vue'
 import XunfeiAvatar from './XunfeiAvatar.vue'
@@ -27,6 +27,12 @@ const props = withDefaults(
     xunfeiText?: string
     /** 讯飞驱动序号：自增触发一次播报 */
     xunfeiSeq?: number
+    /** 游客会话 ID */
+    xunfeiSessionId?: string
+    /** 讯飞语速倍率 */
+    xunfeiSpeed?: number
+    /** 讯飞音高倍率 */
+    xunfeiPitch?: number
   }>(),
   {
     videoUrl: '',
@@ -36,13 +42,16 @@ const props = withDefaults(
     enableXunfei: false,
     xunfeiText: '',
     xunfeiSeq: 0,
+    xunfeiSessionId: '',
+    xunfeiSpeed: 1,
+    xunfeiPitch: 1,
   }
 )
 
 const emit = defineEmits<{
   'video-ended': []
   /** 讯飞不可用（未配置/启动失败），父级据此回退实时模式 */
-  'xunfei-error': [reason: string]
+  'xunfei-error': [reason: string, fallbackText: string]
   /** 讯飞播报状态变化 */
   'xunfei-speaking': [value: boolean]
 }>()
@@ -51,6 +60,21 @@ const emit = defineEmits<{
 const vrmFailed = ref(false)
 /** 讯飞不可用标记 —— 失败后降级为 VRM */
 const xunfeiFailed = ref(false)
+const xunfeiAvatarRef = ref<InstanceType<typeof XunfeiAvatar> | null>(null)
+
+watch(
+  () => props.enableXunfei,
+  (enabled, wasEnabled) => {
+    if (enabled && !wasEnabled) xunfeiFailed.value = false
+  },
+  { flush: 'sync' }
+)
+
+async function interruptXunfei() {
+  await xunfeiAvatarRef.value?.interrupt()
+}
+
+defineExpose({ interruptXunfei })
 
 const stageMode = computed<'video' | 'xunfei' | 'vrm' | 'image'>(() => {
   if (props.videoUrl) return 'video'
@@ -103,9 +127,9 @@ function onVrmError(reason: string) {
   vrmFailed.value = true
 }
 
-function onXunfeiError(reason: string) {
+function onXunfeiError(reason: string, fallbackText: string) {
   xunfeiFailed.value = true
-  emit('xunfei-error', reason)
+  emit('xunfei-error', reason, fallbackText)
 }
 </script>
 
@@ -134,9 +158,14 @@ function onXunfeiError(reason: string) {
 
         <!-- 讯飞虚拟人实时互动 -->
         <XunfeiAvatar
+          ref="xunfeiAvatarRef"
           v-else-if="stageMode === 'xunfei'"
           :drive-text="xunfeiText"
           :drive-seq="xunfeiSeq"
+          :session-id="xunfeiSessionId"
+          :speed="xunfeiSpeed"
+          :pitch="xunfeiPitch"
+          :emotion="emotion"
           @error="onXunfeiError"
           @speaking="(v) => emit('xunfei-speaking', v)"
         />

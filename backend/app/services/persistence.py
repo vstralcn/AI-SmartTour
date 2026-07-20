@@ -219,6 +219,15 @@ async def get_active_avatar_record() -> AvatarRecord | None:
         return (await session.scalars(statement)).first()
 
 
+async def conversation_session_exists(session_id: str) -> bool:
+    """确认游客会话存在，避免把签名服务暴露成无门槛额度消耗接口。"""
+    async with session_scope() as session:
+        statement = select(ConversationSessionRecord.id).where(
+            ConversationSessionRecord.id == session_id
+        )
+        return (await session.scalar(statement)) is not None
+
+
 async def save_avatar_record(record: AvatarRecord) -> AvatarRecord:
     async with session_scope() as session:
         existing = await session.get(AvatarRecord, record.id)

@@ -143,8 +143,10 @@ export interface XunfeiSignedInfo {
 }
 
 /** 拉取讯飞接入参数；未配置时后端返回 enabled=false，前端据此降级回 VRM。 */
-export async function fetchXunfeiSignedInfo(): Promise<XunfeiSignedInfo> {
-  const { data } = await api.get('/avatar/xunfei/signed-url')
+export async function fetchXunfeiSignedInfo(sessionId: string): Promise<XunfeiSignedInfo> {
+  const { data } = await api.get('/avatar/xunfei/signed-url', {
+    params: { session_id: sessionId },
+  })
   return data
 }
 

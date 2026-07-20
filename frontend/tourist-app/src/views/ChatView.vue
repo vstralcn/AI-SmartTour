@@ -32,6 +32,7 @@ const speechPulse = ref(0)
 /** 讯飞待播报文本与驱动序号 */
 const xunfeiText = ref('')
 const xunfeiSeq = ref(0)
+const digitalHumanRef = ref<InstanceType<typeof DigitalHuman> | null>(null)
 const hdVideoUrl = ref('')
 const hdVideoMuted = ref(true)
 const hdGenerating = ref(false)
@@ -80,7 +81,7 @@ onMounted(async () => {
 onUnmounted(() => {
   hdSeq++
   ws.value?.close()
-  cancelSpeech()
+  interruptAllSpeech()
 })
 
 function connectWebSocket() {
@@ -214,12 +215,17 @@ function lastAssistantText(): string {
 }
 
 /** 讯飞不可用（未配置/启动失败）：回退实时模式并用浏览器 TTS 补播 */
-function onXunfeiError(reason: string) {
+function onXunfeiError(reason: string, fallbackText: string) {
   console.warn('讯飞数字人不可用，已切换实时模式:', reason)
   hdError.value = '讯飞数字人暂不可用，已切换实时模式'
   displayMode.value = 'live'
-  const text = lastAssistantText()
-  if (text) speakResponse(text)
+  if (fallbackText) speakResponse(fallbackText)
+}
+
+function interruptAllSpeech() {
+  cancelSpeech()
+  void digitalHumanRef.value?.interruptXunfei()
+  isSpeaking.value = false
 }
 
 /** 讯飞播报状态同步到 UI */
@@ -287,7 +293,7 @@ function setDisplayMode(mode: 'live' | 'hd' | 'xunfei') {
   hdVideoUrl.value = ''
   hdError.value = ''
   hdGenerating.value = false
-  cancelSpeech()
+  interruptAllSpeech()
   isSpeaking.value = false
   // 进入讯飞模式时，把最近一条回复交给讯飞形象播报（未就绪先缓存）
   if (mode === 'xunfei') {
@@ -304,14 +310,12 @@ function onVideoEnded() {
 function toggleVoice() {
   voiceEnabled.value = !voiceEnabled.value
   if (!voiceEnabled.value) {
-    cancelSpeech()
-    isSpeaking.value = false
+    interruptAllSpeech()
   }
 }
 
 function handleSendMessage(text: string) {
-  cancelSpeech()
-  isSpeaking.value = false
+  interruptAllSpeech()
   chatStore.addMessage({
     id: `user-${Date.now()}`,
     role: 'user',
@@ -350,7 +354,7 @@ function appendConnectionError() {
 }
 
 function goBack() {
-  cancelSpeech()
+  interruptAllSpeech()
   chatStore.clearMessages()
   router.push('/')
 }
@@ -430,6 +434,7 @@ function goBack() {
           </div>
         </transition>
         <DigitalHuman
+          ref="digitalHumanRef"
           :emotion="chatStore.currentEmotion"
           :is-speaking="isSpeaking"
           :is-thinking="isThinking"
@@ -444,6 +449,9 @@ function goBack() {
           :enable-xunfei="displayMode === 'xunfei'"
           :xunfei-text="xunfeiText"
           :xunfei-seq="xunfeiSeq"
+          :xunfei-session-id="chatStore.sessionId"
+          :xunfei-speed="activeAvatar.voice_config.speed"
+          :xunfei-pitch="activeAvatar.voice_config.pitch"
           @video-ended="onVideoEnded"
           @xunfei-error="onXunfeiError"
           @xunfei-speaking="onXunfeiSpeaking"

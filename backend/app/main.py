@@ -6,7 +6,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analytics, avatar, chat, digital_human_broadcast, knowledge, recommend, tts
+from app.api import analytics, auth, avatar, chat, digital_human_broadcast, knowledge, recommend, tts
+from app.config import settings
 from app.core.dialogue import dialogue_engine
 from app.db import init_database
 from app.services.persistence import database_is_ready, seed_defaults
@@ -27,13 +28,18 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        origin.strip()
+        for origin in settings.cors_origins.split(",")
+        if origin.strip()
+    ],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(chat.router, prefix="/api/v1", tags=["对话"])
+app.include_router(auth.router, prefix="/api/v1", tags=["管理员认证"])
 app.include_router(recommend.router, prefix="/api/v1", tags=["推荐"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库"])
 app.include_router(avatar.router, prefix="/api/v1", tags=["数字人"])

@@ -8,15 +8,23 @@ const props = withDefaults(
     driveText?: string
     /** 驱动序号：每次自增触发一次 writeText */
     driveSeq?: number
+    /** 游客会话 ID，用于签名 URL 的会话绑定 */
+    sessionId?: string
+    /** 角色语速倍率（0.5-2.0） */
+    speed?: number
+    /** 角色音高倍率（0.5-2.0） */
+    pitch?: number
+    /** 当前情绪，用于微调讯飞韵律 */
+    emotion?: string
   }>(),
-  { driveText: '', driveSeq: 0 }
+  { driveText: '', driveSeq: 0, sessionId: '', speed: 1, pitch: 1, emotion: 'neutral' }
 )
 
 const emit = defineEmits<{
   /** 连接并拉流成功 */
   ready: []
   /** 未配置 / 初始化失败：父组件据此降级回 VRM */
-  error: [reason: string]
+  error: [reason: string, fallbackText: string]
   /** 播报状态变化，用于同步 UI */
   speaking: [value: boolean]
 }>()
@@ -29,13 +37,41 @@ const statusText = ref('讯飞数字人连接中…')
 let avatar: any = null
 let ready = false
 let destroyed = false
+let driveGeneration = 0
+let resumeListener: (() => void) | null = null
 /** 就绪前到达的文本先缓存，连接成功后补播 */
 let pendingText = ''
+let activeText = ''
+
+const emotionProsody: Record<string, { speed: number; pitch: number }> = {
+  happy: { speed: 5, pitch: 4 },
+  excited: { speed: 10, pitch: 6 },
+  caring: { speed: -8, pitch: -3 },
+  explaining: { speed: -4, pitch: 0 },
+  neutral: { speed: 0, pitch: 0 },
+}
+
+function toXunfeiScale(value: number): number {
+  const normalized = Math.min(Math.max(value, 0.5), 2)
+  return Math.round(normalized <= 1 ? (normalized - 0.5) * 100 : 50 + (normalized - 1) * 50)
+}
+
+function currentTtsParams() {
+  const adjustment = emotionProsody[props.emotion] || emotionProsody.neutral
+  return {
+    speed: Math.min(Math.max(toXunfeiScale(props.speed) + adjustment.speed, 0), 100),
+    pitch: Math.min(Math.max(toXunfeiScale(props.pitch) + adjustment.pitch, 0), 100),
+  }
+}
 
 async function init() {
   try {
     statusText.value = '正在拉取讯飞接入参数…'
-    const info = await fetchXunfeiSignedInfo()
+    if (!props.sessionId) {
+      fail('游客会话尚未建立')
+      return
+    }
+    const info = await fetchXunfeiSignedInfo(props.sessionId)
     if (destroyed) return
     if (!info.enabled || !info.signedUrl) {
       fail('讯飞虚拟人未配置')
@@ -55,7 +91,7 @@ async function init() {
     avatar = new AvatarPlatform({ useInlinePlayer: true })
     bindEvents(SDKEvents, PlayerEvents)
 
-    // 安全接入：仅传 appId + sceneId + signedUrl，密钥不出现在前端
+    // apiSecret 只在后端签名；前端只接收有时效的 signedUrl
     avatar.setApiInfo({
       appId: info.appId,
       sceneId: info.sceneId,
@@ -64,7 +100,7 @@ async function init() {
     avatar.setGlobalParams({
       stream: { protocol: 'xrtc' }, // xrtc 协议
       avatar: { avatar_id: info.avatarId, width: 720, height: 1280 },
-      tts: { vcn: info.vcn },
+      tts: { vcn: info.vcn, ...currentTtsParams() },
     })
 
     statusText.value = '正在与讯飞服务器握手…'
@@ -97,53 +133,92 @@ function bindEvents(SDKEvents: any, PlayerEvents: any) {
       status.value = 'ready'
     })
     .on(SDKEvents.frame_start, () => emit('speaking', true))
-    .on(SDKEvents.frame_stop, () => emit('speaking', false))
+    .on(SDKEvents.frame_stop, () => {
+      activeText = ''
+      emit('speaking', false)
+    })
     .on(SDKEvents.disconnected, (err: any) => {
       emit('speaking', false)
-      if (err) fail(`讯飞异常断开：${err?.code ?? ''} ${err?.message ?? ''}`)
+      if (!destroyed) {
+        fail(`讯飞异常断开：${err?.code ?? ''} ${err?.message ?? ''}`)
+      }
     })
-    .on(SDKEvents.error, (err: any) =>
-      console.warn('[讯飞] error', err?.code, err?.message)
-    )
+    .on(SDKEvents.error, (err: any) => {
+      fail(`讯飞服务错误：${err?.code ?? ''} ${err?.message ?? ''}`)
+    })
 
   // 浏览器自动播放限制：需用户交互后 resume() 恢复声音。
   // useInlinePlayer=true 时构造函数已创建 player，这里直接取。
   const player = avatar.player || avatar.createPlayer()
   player.on(PlayerEvents.playNotAllowed, () => {
     console.warn('[讯飞] 浏览器阻止自动播放，等待用户点击后恢复')
-    const resume = () => {
-      avatar?.player?.resume?.()
-      document.removeEventListener('click', resume)
+    removeResumeListener()
+    resumeListener = () => {
+      void avatar?.player?.resume?.().catch((e: any) => {
+        fail(`讯飞音频恢复失败：${e?.code ?? ''} ${e?.message ?? ''}`)
+      })
+      removeResumeListener()
     }
-    document.addEventListener('click', resume)
+    document.addEventListener('click', resumeListener, { once: true })
   })
-  player.on(PlayerEvents.error, (err: any) =>
-    console.warn('[讯飞] player error', err?.code, err?.message)
-  )
+  player.on(PlayerEvents.error, (err: any) => {
+    fail(`讯飞播放器错误：${err?.code ?? ''} ${err?.message ?? ''}`)
+  })
 }
 
 /** 文本驱动：新回复先打断当前播报，再纯播报（nlp:false，文本由本项目 Agent 产出） */
 async function drive(text: string) {
   const t = text.trim()
   if (!t || !ready || !avatar) return
+  const generation = ++driveGeneration
+  const currentAvatar = avatar
   try {
-    await avatar.interrupt().catch(() => {})
-    await avatar.writeText(t, { nlp: false })
+    await currentAvatar.interrupt().catch(() => {})
+    if (generation !== driveGeneration || currentAvatar !== avatar || !ready) return
+    activeText = t
+    await currentAvatar.writeText(t, { nlp: false, tts: currentTtsParams() })
   } catch (e: any) {
-    console.warn('[讯飞] writeText 失败', e?.code, e?.message)
+    if (generation === driveGeneration && !destroyed) {
+      fail(`讯飞播报失败：${e?.code ?? ''} ${e?.message ?? ''}`)
+    }
   }
 }
 
+async function interrupt() {
+  driveGeneration++
+  pendingText = ''
+  activeText = ''
+  emit('speaking', false)
+  if (!avatar || !ready) return
+  try {
+    await avatar.interrupt()
+  } catch (e: any) {
+    if (!destroyed) {
+      console.warn('[讯飞] interrupt 失败', e?.code, e?.message)
+    }
+  }
+}
+
+function removeResumeListener() {
+  if (!resumeListener) return
+  document.removeEventListener('click', resumeListener)
+  resumeListener = null
+}
+
 function fail(reason: string) {
-  if (status.value === 'failed') return
+  if (destroyed || status.value === 'failed') return
+  const fallbackText = activeText || pendingText
   status.value = 'failed'
   statusText.value = reason
   console.warn(`[讯飞] ${reason}，降级回 VRM`)
   teardown()
-  emit('error', reason)
+  emit('error', reason, fallbackText)
 }
 
 function teardown() {
+  driveGeneration++
+  removeResumeListener()
+  emit('speaking', false)
   try {
     avatar?.stop()
   } catch {}
@@ -153,6 +228,8 @@ function teardown() {
   avatar = null
   ready = false
 }
+
+defineExpose({ interrupt })
 
 watch(
   () => props.driveSeq,
@@ -171,6 +248,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   destroyed = true
+  pendingText = ''
+  activeText = ''
   teardown()
 })
 </script>

@@ -17,6 +17,18 @@ class Settings(BaseSettings):
     app_name: str = "AI-SmartTour"
     debug: bool = False
 
+    # 管理后台认证：生产环境必须通过环境变量设置，token secret 至少 32 字符。
+    admin_username: str = "admin"
+    admin_password: str = ""
+    admin_token_secret: str = ""
+    admin_token_ttl_minutes: int = 480
+
+    # 仅允许本地开发前端跨域；容器部署通过同源 Nginx 代理访问 API。
+    cors_origins: str = (
+        "http://localhost:3000,http://localhost:3001,"
+        "http://127.0.0.1:3000,http://127.0.0.1:3001"
+    )
+
     # 数据库
     database_url: str = "sqlite+aiosqlite:///./smarttour.db"
     redis_url: str = "redis://localhost:6379/0"

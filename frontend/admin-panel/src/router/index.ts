@@ -1,11 +1,19 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { isAdminAuthenticated } from '../services/api'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
+      path: '/login',
+      name: 'Login',
+      component: () => import('../views/LoginView.vue'),
+      meta: { guestOnly: true },
+    },
+    {
       path: '/',
       component: () => import('../layout/AdminLayout.vue'),
+      meta: { requiresAuth: true },
       children: [
         {
           path: '',
@@ -30,6 +38,14 @@ const router = createRouter({
       ],
     },
   ],
+})
+
+router.beforeEach((to) => {
+  const authenticated = isAdminAuthenticated()
+  if (to.meta.requiresAuth && !authenticated) {
+    return { name: 'Login', query: { redirect: to.fullPath } }
+  }
+  if (to.meta.guestOnly && authenticated) return { name: 'Dashboard' }
 })
 
 export default router

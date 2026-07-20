@@ -7,6 +7,61 @@ const api = axios.create({
   timeout: 30000,
 })
 
+const AUTH_TOKEN_KEY = 'smarttour.admin.token'
+const AUTH_EXPIRES_KEY = 'smarttour.admin.expires'
+
+export interface AdminLoginResponse {
+  access_token: string
+  token_type: string
+  expires_at: number
+}
+
+export function getAdminToken(): string {
+  return sessionStorage.getItem(AUTH_TOKEN_KEY) || ''
+}
+
+export function isAdminAuthenticated(): boolean {
+  const token = getAdminToken()
+  const expiresAt = Number(sessionStorage.getItem(AUTH_EXPIRES_KEY) || 0)
+  if (!token || expiresAt * 1000 <= Date.now()) {
+    clearAdminSession()
+    return false
+  }
+  return true
+}
+
+export function clearAdminSession(): void {
+  sessionStorage.removeItem(AUTH_TOKEN_KEY)
+  sessionStorage.removeItem(AUTH_EXPIRES_KEY)
+}
+
+export async function loginAdmin(username: string, password: string): Promise<void> {
+  const { data } = await axios.post<AdminLoginResponse>(
+    `${API_BASE}/api/v1/auth/admin/login`,
+    { username, password },
+    { headers: { 'Content-Type': 'application/json' } }
+  )
+  sessionStorage.setItem(AUTH_TOKEN_KEY, data.access_token)
+  sessionStorage.setItem(AUTH_EXPIRES_KEY, String(data.expires_at))
+}
+
+api.interceptors.request.use((config) => {
+  const token = getAdminToken()
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      clearAdminSession()
+      if (window.location.pathname !== '/login') window.location.assign('/login')
+    }
+    return Promise.reject(error)
+  }
+)
+
 /* ---- Knowledge Base ---- */
 
 export interface KnowledgeDoc {

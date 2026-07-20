@@ -1,11 +1,12 @@
 """数据分析与大屏API。"""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.core.auth import require_admin
 from app.models.schemas import DashboardData, SentimentReport
 from app.services.analytics import build_dashboard, build_sentiment_report
 
-router = APIRouter(prefix="/admin/analytics")
+router = APIRouter(prefix="/admin/analytics", dependencies=[Depends(require_admin)])
 
 
 @router.get("/dashboard", response_model=DashboardData)

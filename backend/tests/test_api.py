@@ -4,16 +4,50 @@ import uuid
 from fastapi.testclient import TestClient
 
 from app.config import settings
+from app.core.auth import create_admin_token
 from app.main import app
 
 
 class APITest(unittest.TestCase):
     def setUp(self) -> None:
+        self.auth_originals = {
+            "admin_username": settings.admin_username,
+            "admin_password": settings.admin_password,
+            "admin_token_secret": settings.admin_token_secret,
+        }
+        settings.admin_username = "test-admin"
+        settings.admin_password = "test-password"
+        settings.admin_token_secret = "test-secret-that-is-at-least-32-characters"
         self.client_context = TestClient(app)
         self.client = self.client_context.__enter__()
+        token, _ = create_admin_token()
+        self.client.headers["Authorization"] = f"Bearer {token}"
 
     def tearDown(self) -> None:
         self.client_context.__exit__(None, None, None)
+        for key, value in self.auth_originals.items():
+            setattr(settings, key, value)
+
+    def test_admin_routes_require_authentication(self) -> None:
+        authorization = self.client.headers.pop("Authorization")
+        try:
+            response = self.client.get("/api/v1/admin/avatar/list")
+        finally:
+            self.client.headers["Authorization"] = authorization
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_admin_login_issues_short_lived_token(self) -> None:
+        response = self.client.post(
+            "/api/v1/auth/admin/login",
+            json={"username": "test-admin", "password": "test-password"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.json()["token_type"], "bearer")
+        self.assertTrue(response.json()["access_token"])
 
     def test_health_exposes_runtime_mode(self) -> None:
         response = self.client.get("/health")
@@ -165,14 +199,20 @@ class APITest(unittest.TestCase):
         for key, value in overrides.items():
             setattr(settings, key, value)
         try:
-            payload = self.client.get(
-                "/api/v1/avatar/xunfei/signed-url"
+            session = self.client.post(
+                "/api/v1/sessions", json={"interests": ["历史文化"]}
             ).json()
+            signed_response = self.client.get(
+                "/api/v1/avatar/xunfei/signed-url",
+                params={"session_id": session["session_id"]},
+            )
+            payload = signed_response.json()
         finally:
             for key, value in originals.items():
                 setattr(settings, key, value)
 
         self.assertTrue(payload["enabled"])
+        self.assertEqual(signed_response.headers["cache-control"], "no-store")
         self.assertEqual(payload["appId"], "app-123")
         self.assertEqual(payload["sceneId"], "scene-9")
         self.assertEqual(payload["avatarId"], "avatar-7")
@@ -184,12 +224,36 @@ class APITest(unittest.TestCase):
         )
         self.assertIn("date=", payload["signedUrl"])
         self.assertIn("host=", payload["signedUrl"])
-        # 密钥绝不能出现在下发给前端的响应里
+        # apiSecret 绝不能出现在下发给前端的响应里；apiKey 位于签名串的 Base64 内容中。
         serialized = str(payload)
         self.assertNotIn("secret-xyz", serialized)
         self.assertNotIn("key-abc", serialized)
         self.assertNotIn("apiSecret", payload)
         self.assertNotIn("apiKey", payload)
+
+    def test_xunfei_signed_url_rejects_unknown_session(self) -> None:
+        overrides = {
+            "xf_avatar_app_id": "app-123",
+            "xf_avatar_api_key": "key-abc",
+            "xf_avatar_api_secret": "secret-xyz",
+            "xf_avatar_scene_id": "scene-9",
+            "xf_avatar_avatar_id": "avatar-7",
+            "xf_avatar_vcn": "x4_yezi",
+        }
+        originals = {key: getattr(settings, key) for key in overrides}
+        for key, value in overrides.items():
+            setattr(settings, key, value)
+        try:
+            response = self.client.get(
+                "/api/v1/avatar/xunfei/signed-url",
+                params={"session_id": str(uuid.uuid4())},
+            )
+        finally:
+            for key, value in originals.items():
+                setattr(settings, key, value)
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers["cache-control"], "no-store")
 
 
 if __name__ == "__main__":

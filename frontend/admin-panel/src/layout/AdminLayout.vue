@@ -5,7 +5,9 @@ import {
   Document,
   User,
   DataAnalysis,
+  SwitchButton,
 } from '@element-plus/icons-vue'
+import { clearAdminSession } from '../services/api'
 
 const router = useRouter()
 const route = useRoute()
@@ -19,6 +21,11 @@ const menuItems = [
 
 function navigateTo(path: string) {
   router.push(path)
+}
+
+async function logout() {
+  clearAdminSession()
+  await router.replace('/login')
 }
 </script>
 
@@ -41,6 +48,10 @@ function navigateTo(path: string) {
           <span>{{ item.label }}</span>
         </div>
       </nav>
+      <button class="logout-button" type="button" @click="logout">
+        <el-icon :size="18"><SwitchButton /></el-icon>
+        <span>退出登录</span>
+      </button>
     </aside>
     <main class="main-content">
       <router-view />
@@ -55,6 +66,8 @@ function navigateTo(path: string) {
 }
 
 .sidebar {
+  display: flex;
+  flex-direction: column;
   width: 220px;
   background: #1f2937;
   color: white;
@@ -82,6 +95,26 @@ function navigateTo(path: string) {
 
 .sidebar-nav {
   padding: 12px 8px;
+  flex: 1;
+}
+
+.logout-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% - 16px);
+  margin: 8px;
+  padding: 11px 16px;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.logout-button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .nav-item {
