@@ -27,7 +27,7 @@ const isSpeaking = ref(false)
 const isThinking = ref(false)
 const voiceEnabled = ref(true)
 /** 数字人呈现模式：live=3D实时互动，hd=高清播报视频，xunfei=讯飞虚拟人 */
-const displayMode = ref<'live' | 'hd' | 'xunfei'>('live')
+const displayMode = ref<'live' | 'hd' | 'xunfei'>('xunfei')
 const speechPulse = ref(0)
 /** 讯飞待播报文本与驱动序号 */
 const xunfeiText = ref('')

@@ -1,10 +1,17 @@
 """应用配置"""
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# .env 位于项目根目录（config.py 在 backend/app/，向上三级）
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(
+        env_file=_PROJECT_ROOT / ".env", extra="ignore"
+    )
 
     # 应用配置
     app_name: str = "AI-SmartTour"

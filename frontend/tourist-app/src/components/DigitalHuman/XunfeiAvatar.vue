@@ -21,9 +21,6 @@ const emit = defineEmits<{
   speaking: [value: boolean]
 }>()
 
-/** SDK ESM 部署在静态目录，动态加载避免进入打包、保持播放器分包同目录解析 */
-const SDK_URL = '/sdk/avatar-sdk-web_3.2.3.1002/esm/index.js'
-
 const wrapperRef = ref<HTMLDivElement | null>(null)
 const status = ref<'connecting' | 'ready' | 'failed'>('connecting')
 const statusText = ref('讯飞数字人连接中…')
@@ -46,7 +43,8 @@ async function init() {
     }
 
     statusText.value = '正在加载讯飞 SDK…'
-    const mod: any = await import(/* @vite-ignore */ SDK_URL)
+    // Vite 对 src/ 下的静态字符串动态导入会自动处理分块与路径解析
+    const mod: any = await import('../../vendor/xunfei-sdk/index.js')
     if (destroyed) return
     const AvatarPlatform = mod.default
     const { SDKEvents, PlayerEvents } = mod
@@ -64,8 +62,8 @@ async function init() {
       signedUrl: info.signedUrl,
     })
     avatar.setGlobalParams({
-      stream: { protocol: 'xrtc' }, // 首版不开透明背景，跑通后再加 alpha:1
-      avatar: { avatar_id: info.avatarId, width: 720, height: 1280 }, // 宽高须为 4 的倍数
+      stream: { protocol: 'xrtc' }, // xrtc 协议
+      avatar: { avatar_id: info.avatarId, width: 720, height: 1280 },
       tts: { vcn: info.vcn },
     })
 
