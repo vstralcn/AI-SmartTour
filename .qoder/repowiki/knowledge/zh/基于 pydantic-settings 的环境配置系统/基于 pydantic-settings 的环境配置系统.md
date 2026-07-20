@@ -24,7 +24,7 @@ source_files:
 
 ## 3. 架构与约定
 - **单一 Settings 模型**：所有后端配置集中在 `app.config.Settings` 中，按领域分组（应用、数据库、LLM、向量库、数字人、ASR/TTS），每个字段都有 Python 类型与合理默认值，便于本地 SQLite 直连启动。
-- **配置来源优先级**：`model_config = SettingsConfigDict(env_file=".env")` 使 `.env` 中的变量覆盖默认值；容器环境下的环境变量又覆盖 `.env`，形成“默认 → .env → 容器 env”三层覆盖。
+- **配置来源优先级**：`model_config = SettingsConfigDict(env_file=_PROJECT_ROOT / “.env”)` 使用项目根目录的绝对路径定位 `.env`，使 `.env` 中的变量覆盖默认值；容器环境下的环境变量又覆盖 `.env`，形成”默认 → .env → 容器 env”三层覆盖。注意：`.env` 路径为绝对路径（`backend/app/config.py` 中通过 `Path(__file__).resolve().parent.parent.parent / “.env”` 计算），避免从不同工作目录启动时找不到文件。
 - **compose 变量桥接**：`.env.example` 定义的 `BACKEND_PORT`、`POSTGRES_PASSWORD` 等通过 compose 的 `${VAR:-default}` 语法注入到容器环境变量名（如 `DATABASE_URL`、`REDIS_URL`、`LLM_API_KEY`），由 `Settings` 直接读取。
 - **无独立配置文件**：项目未使用 YAML/JSON/TOML 等外部配置文件，全部以环境变量驱动，符合云原生 12-Factor 实践。
 - **前端侧无运行时配置**：前后端分离，前端通过 Nginx/Vite 构建产物访问后端 API，不引入运行时配置机制。

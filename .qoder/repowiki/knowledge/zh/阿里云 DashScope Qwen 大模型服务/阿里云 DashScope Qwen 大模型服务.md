@@ -19,5 +19,5 @@ scope:
 
 ### 关键约束
 - 鉴权协议：OpenAI 兼容的 Bearer Token（`api_key`）+ 自定义 `base_url`；密钥不得提交到仓库，需通过 `.env` 或容器环境注入。
-- 超时与降级：当前对话链路未设置 timeout，上游卡住会直接影响首字响应 P95 指标；建议加超时并在超时后回退到 grounded_answer。
+- 超时与降级：已为 LLM 调用配置 30 秒超时（`app/services/llm.py` 中 `DEFAULT_TIMEOUT = 30.0`），超时后自动回退到 grounded_answer 本地知识库回答。
 - 多实例一致性：若未来启用多 worker/多实例，需确保 LLM 调用幂等并配合会话持久化（Redis）。

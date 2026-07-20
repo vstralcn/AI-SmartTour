@@ -137,23 +137,23 @@ Router-->>FE : JSON响应(含状态码)
 
 ### 聊天对话API（Chat）
 职责
-- 提供多轮对话、上下文管理、消息历史查询与清理
-- 与LLM服务交互，结合会话持久化
+- 提供实时流式对话，通过WebSocket推送多轮交互
+- 会话管理（创建、状态维护）
+- 智能体能力查询与路径推荐
 
 主要接口
-- POST /api/v1/chat/messages
-  - 认证：需要鉴权头（如Authorization）
-  - 请求体：消息内容、会话ID、可选的上下文参数
-  - 响应：生成的回复、会话元信息
-  - 状态码：200成功、400参数错误、401未授权、429限流、500服务异常
-- GET /api/v1/chat/sessions/{session_id}
-  - 认证：需要鉴权头
-  - 响应：会话详情与消息列表
-  - 状态码：200、404不存在、401
-- DELETE /api/v1/chat/sessions/{session_id}
-  - 认证：需要鉴权头
-  - 响应：删除确认
-  - 状态码：204无内容、404、401
+- WebSocket /api/v1/chat/stream
+  - 查询参数：session_id（会话标识）
+  - 消息格式（JSON）：`{"content": "...", "type": "text"}`
+  - 流式事件：`emotion`（情绪状态）、`agent_step`（智能体步骤）、`sources`（引用来源）、`text_chunk`（文本片段）、`error`（错误信息）
+  - 无需认证
+- GET /api/v1/agent/capabilities
+  - 返回：可用工具列表（智能体能力描述）
+  - 无需认证
+- POST /api/v1/sessions
+  - 请求体：`{visitor_id?, interests?, age_group?, companions?, mobility?, visit_duration?}`
+  - 响应：`{session_id, greeting}`
+  - 无需认证
 
 流程图（消息发送与生成）
 ```mermaid
@@ -183,33 +183,32 @@ Return200 --> End
 
 ### 知识库管理API（Knowledge）
 职责
-- 文档上传、解析、索引与检索
-- 基于RAG的知识问答与片段溯源
+- 知识文档的增删改查管理
+- 文档上传、解析与检索测试
 
 主要接口
-- POST /api/v1/knowledge/documents
-  - 认证：管理员或具备写权限
-  - 请求体：文件二进制或多部分表单字段
-  - 响应：任务ID或解析结果摘要
-  - 状态码：201创建、400参数错误、401、413过大、500
-- GET /api/v1/knowledge/documents
-  - 认证：需要鉴权头
-  - 查询参数：分页、过滤条件
-  - 响应：文档列表与元信息
-  - 状态码：200、401
-- GET /api/v1/knowledge/documents/{doc_id}
-  - 认证：需要鉴权头
-  - 响应：文档详情与片段列表
-  - 状态码：200、404
-- DELETE /api/v1/knowledge/documents/{doc_id}
-  - 认证：管理员或具备写权限
+- GET /admin/knowledge/list
+  - 返回：知识文档列表
+  - 无需认证
+- POST /admin/knowledge/entries
+  - 请求体：`{title, category, content, kind, source?, keywords?, tags?}`
+  - 响应：创建确认
+  - 无需认证
+- PUT /admin/knowledge/{doc_id}
+  - 请求体：`{title?, category?, content?, kind?, source?, keywords?, tags?}`
+  - 响应：更新确认
+  - 无需认证
+- POST /admin/knowledge/upload
+  - 请求体：multipart/form-data（file + category）
+  - 响应：上传确认
+  - 无需认证
+- DELETE /admin/knowledge/{doc_id}
   - 响应：删除确认
-  - 状态码：204、404、401
-- POST /api/v1/knowledge/query
-  - 认证：需要鉴权头
-  - 请求体：问题文本、可选top_k、过滤条件
-  - 响应：答案与引用片段
-  - 状态码：200、400、401、500
+  - 无需认证
+- POST /admin/knowledge/test
+  - 请求体：`{question}`
+  - 响应：`{answer, evidence[]}`（答案与引用来源）
+  - 无需认证
 
 RAG检索流程
 ```mermaid
@@ -237,20 +236,13 @@ Format --> QEnd(["返回结果"])
 
 ### 推荐系统API（Recommend）
 职责
-- 基于用户画像、上下文与知识内容的个性化推荐
-- 支持多种策略（协同过滤、规则、LLM辅助）
+- 基于用户画像、兴趣与上下文生成个性化游览路线推荐
 
 主要接口
-- GET /api/v1/recommend/routes
-  - 认证：需要鉴权头
-  - 查询参数：用户ID、时间窗口、偏好标签、数量上限
-  - 响应：推荐路线列表与评分
-  - 状态码：200、400、401、500
-- GET /api/v1/recommend/places
-  - 认证：需要鉴权头
-  - 查询参数：位置、半径、兴趣类别、数量上限
-  - 响应：推荐地点列表
-  - 状态码：200、400、401、500
+- POST /api/v1/recommend/route
+  - 请求体：`{session_id, duration_hours, interests, companions, mobility}`
+  - 响应：`{route: ScenicSpot[], description}`
+  - 无需认证
 
 章节来源
 - [backend/app/api/recommend.py](file://backend/app/api/recommend.py)
@@ -260,55 +252,49 @@ Format --> QEnd(["返回结果"])
 
 ### 数据分析API（Analytics）
 职责
-- 聚合统计、趋势分析、会话与知识库使用指标
-- 提供可视化所需的数据集
+- 聚合统计数据、趋势分析与运行指标监控
 
 主要接口
-- GET /api/v1/analytics/dashboard
-  - 认证：管理员
-  - 查询参数：时间范围、维度分组
-  - 响应：关键指标汇总
-  - 状态码：200、400、401、500
-- GET /api/v1/analytics/conversations
-  - 认证：管理员
-  - 查询参数：会话ID、时间范围、分页
-  - 响应：会话统计明细
-  - 状态码：200、400、401、500
-- GET /api/v1/analytics/knowledge_usage
-  - 认证：管理员
-  - 查询参数：文档ID、时间范围
-  - 响应：文档被引用次数与热度
-  - 状态码：200、400、401、500
+- GET /admin/analytics/dashboard
+  - 返回：DashboardData（聚合指标总览）
+  - 无需认证
+- GET /admin/analytics/sentiment
+  - 返回：SentimentReport（情感分析报告）
+  - 无需认证
 
 章节来源
 - [backend/app/api/analytics.py](file://backend/app/api/analytics.py)
 - [backend/app/services/persistence.py](file://backend/app/services/persistence.py)
 - [backend/app/models/schemas.py](file://backend/app/models/schemas.py)
 
-### 头像配置API（Avatar）
+### 数字人形象API（Avatar）
 职责
-- 头像图片上传、预览、替换与删除
-- 支持多种头像类型（图像、VRM模型等）
+- 数字人（Digital Human）形象的增删改查管理
+- 提供前端实时数字人驱动的配置与签名接口
 
-主要接口
-- POST /api/v1/avatar/upload
-  - 认证：需要鉴权头
-  - 请求体：多部分表单，包含头像文件与类型
-  - 响应：头像URL与元信息
-  - 状态码：201、400、401、413、500
-- GET /api/v1/avatar/{user_id}
-  - 认证：需要鉴权头
-  - 响应：当前头像URL与类型
-  - 状态码：200、404、401
-- PUT /api/v1/avatar/{user_id}
-  - 认证：需要鉴权头
-  - 请求体：新头像文件与类型
-  - 响应：更新后的头像URL
-  - 状态码：200、400、401、413、500
-- DELETE /api/v1/avatar/{user_id}
-  - 认证：需要鉴权头
+主要接口（管理端）
+- GET /admin/avatar/list
+  - 返回：所有数字人形象列表
+  - 无需认证
+- POST /admin/avatar/config
+  - 请求体：`{id?, name, appearance:{image_url, style}, voice_config:{voice_id, speed, pitch}, personality, gender, clothing, speaking_style}`
+  - 响应：保存确认
+  - 无需认证
+- PUT /admin/avatar/{avatar_id}/activate
+  - 响应：激活确认
+  - 无需认证
+- DELETE /admin/avatar/{avatar_id}
   - 响应：删除确认
-  - 状态码：204、404、401
+  - 无需认证
+
+主要接口（公开）
+- GET /api/v1/avatar/active
+  - 返回：当前激活的数字人形象配置
+  - 无需认证
+- GET /api/v1/avatar/xunfei/signed-url
+  - 返回：`{enabled, appId, sceneId, avatarId, vcn, signedUrl}`
+  - 说明：获取讯飞（Xunfei）签名WebSocket URL，用于前端实时驱动数字人播报，是数字人功能的关键依赖
+  - 无需认证
 
 章节来源
 - [backend/app/api/avatar.py](file://backend/app/api/avatar.py)
@@ -397,21 +383,25 @@ SvcPersist --> DBSession["db/session.py"]
 - 请求/响应
   - 统一JSON结构，包含code、message、data字段
   - 使用Pydantic Schema进行强类型校验与序列化
-- 认证与授权
-  - 基于Bearer Token的鉴权，敏感操作需管理员角色
 - 安全与合规
-  - CORS白名单最小化、输入校验严格、输出脱敏
+  - 输入校验严格、输出脱敏
   - 上传文件类型与大小限制、防注入与XSS防护
+
+> **注意：** 当前版本**未实现认证层**，所有API端点均为公开访问（CORS `allow_origins=["*"]`），无Bearer Token校验、无RBAC角色控制。此状态为已知限制，生产部署前需补充完整鉴权与授权机制。
 
 ### 中间件与全局配置
 - CORS
-  - 仅允许受信任的前端域名
+  - `allow_origins=["*"]`（开放所有来源）
 - 速率限制
-  - 基于IP或用户标识的滑动窗口限流
+  - 暂未实现
+- 认证中间件
+  - 暂未实现
 - 请求日志
   - 记录请求ID、方法、路径、耗时、状态码
 - 异常转换
   - 将业务异常与系统异常映射为标准错误响应
+- 健康检查
+  - `/health` 端点用于探针与自恢复
 
 章节来源
 - [backend/app/main.py](file://backend/app/main.py)

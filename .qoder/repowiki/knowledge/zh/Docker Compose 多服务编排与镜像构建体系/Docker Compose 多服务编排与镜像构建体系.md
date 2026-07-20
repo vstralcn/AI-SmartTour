@@ -46,9 +46,10 @@ source_files:
    - backend 依赖 postgres、redis 就绪后才启动（`depends_on` + `condition: service_healthy`）
    - tourist-app 与 admin-panel 依赖 backend 健康后启动
    - digital-human 通过 `profiles: [gpu]` 按需启用，需 nvidia docker runtime 并声明 GPU 设备配额
+   - 前端 nginx 容器**仅托管静态文件**，不代理后端 API；开发环境通过 Vite proxy 转发 `/api` 到 backend
 
 2. **环境变量驱动配置**
-   - 所有外部连接参数通过 `${VAR:-default}` 注入（数据库、LLM API Key/Base/Model、各服务端口等）
+   - 所有外部连接参数通过 `${VAR:-default}` 注入（数据库、LLM API Key/Base/Model、各服务端口、讯飞虚拟人 XF_AVATAR_* 七项配置等）
    - 提供 `.env.example` 作为模板，避免硬编码敏感信息
 
 3. **数据持久化**
